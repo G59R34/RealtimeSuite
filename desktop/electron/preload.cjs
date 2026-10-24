@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('manager', {
   testDatabase: () => ipcRenderer.invoke('manager:test-db'),
   createAdmin: (payload) => ipcRenderer.invoke('manager:create-admin', payload),
   resetPassword: (payload) => ipcRenderer.invoke('manager:reset-password', payload),
+  setOrganizationName: (name) => ipcRenderer.invoke('manager:set-org-name', name),
   listUsers: () => ipcRenderer.invoke('manager:list-users'),
   createUser: (payload) => ipcRenderer.invoke('manager:create-user', payload),
   deleteUser: (payload) => ipcRenderer.invoke('manager:delete-user', payload),

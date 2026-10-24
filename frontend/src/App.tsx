@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { TimelineBoard } from './components/TimelineBoard';
 import { ClockInAudit } from './components/ClockInAudit';
@@ -6,7 +6,6 @@ import { EmployeeRoster } from './components/EmployeeRoster';
 import { AdminReports } from './components/AdminReports';
 import { OrgSettings } from './components/OrgSettings';
 import { OpsBoardSettingsPage } from './components/OpsBoardSettingsPage';
-import { OnboardingFlow } from './components/OnboardingFlow';
 import { AuthScreen } from './components/AuthScreen';
 import { EmployeePortal } from './components/EmployeePortal';
 import { AdminSchedulingPortal } from './components/AdminSchedulingPortal';
@@ -73,7 +72,6 @@ import {
   reviewOvertimeRequest,
   reviewShiftSwapRequest,
   reviewTimeOffRequest,
-  saveMyOnboardingState,
   sendOnboardingCredentialsEmail,
   setShiftPoolStatus,
   signIn,
@@ -131,10 +129,12 @@ export default function App() {
   const [settings, setSettings] = useState<OrganizationSettings | null>(null);
   const [adminData, setAdminData] = useState<AdminDashboardData | null>(null);
   const [employeeData, setEmployeeData] = useState<EmployeePortalData | null>(null);
+  const [portalError, setPortalError] = useState<string | null>(null);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataBusy, setDataBusy] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ViewMode>('operations');
+  const activeViewRef = useRef<ViewMode>('operations');
   const [selectedDate, setSelectedDate] = useState(todayDateInputValue());
   const [timelineWindowHours, setTimelineWindowHours] = useState<2 | 4 | 8>(8);
   const [filters, setFilters] = useState<BoardFilters>({ resources: true, events: true, unassigned: true });
@@ -146,8 +146,6 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [connectivity, setConnectivity] = useState<'online' | 'syncing' | 'offline'>('online');
-  const [onboardingBusy, setOnboardingBusy] = useState(false);
-  const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [messageOpen, setMessageOpen] = useState(false);
   const [messageRecipient, setMessageRecipient] = useState('');
   const [messageSubject, setMessageSubject] = useState('');
@@ -220,6 +218,16 @@ export default function App() {
       if (isAdmin) {
         const next = await fetchAdminDashboardData(selectedDate);
         setAdminData(next);
+        // Managers still need their own portal data (own shifts, tasks, inbox) when they
+        // open the Employee Portal view from the admin navigation.
+        if (activeViewRef.current === 'employee-portal') {
+          try {
+            setEmployeeData(await fetchEmployeePortalData(profile.id, selectedDate));
+            setPortalError(null);
+          } catch (error) {
+            setPortalError(error instanceof Error ? error.message : 'Could not load your employee portal.');
+          }
+        }
       } else {
         const next = await fetchEmployeePortalData(profile.id, selectedDate);
         setEmployeeData(next);
@@ -233,6 +241,14 @@ export default function App() {
       setDataLoading(false);
     }
   }, [profile, isAdmin, selectedDate]);
+
+  useEffect(() => {
+    activeViewRef.current = activeView;
+    // Managers get their own portal data on demand instead of on every board refresh.
+    if (isAdmin && activeView === 'employee-portal' && !employeeData) {
+      void reloadData({ silent: true });
+    }
+  }, [activeView, isAdmin, employeeData, reloadData]);
 
   useEffect(() => {
     if (!profile) return;
@@ -347,12 +363,6 @@ export default function App() {
     setMessageOpen(true);
   }
 
-  const onboardingRequired = useMemo(() => {
-    if (!profile || !settings?.enable_onboarding || !features.onboarding) return false;
-    const completedVersion = profile.onboarding_completed_version ?? 0;
-    return !profile.onboarding_completed_at || completedVersion < settings.onboarding_version;
-  }, [profile, settings, features.onboarding]);
-
   const schedulingEnabled = features.shifts || features.shift_pool || features.auto_assign;
 
   useEffect(() => {
@@ -369,25 +379,6 @@ export default function App() {
     };
     if (!allowed[activeView]) setActiveView('operations');
   }, [activeView, features, isAdmin, schedulingEnabled]);
-
-  async function handleCompleteOnboarding(answers: Record<string, unknown>) {
-    if (!profile || !settings) return;
-    setOnboardingBusy(true);
-    setOnboardingError(null);
-    try {
-      await saveMyOnboardingState({
-        answers,
-        completed: true,
-        completedVersion: settings.onboarding_version
-      });
-      await loadProfile(profile.id);
-      await reloadData({ silent: true });
-    } catch (error) {
-      setOnboardingError(error instanceof Error ? error.message : 'Failed to save onboarding.');
-    } finally {
-      setOnboardingBusy(false);
-    }
-  }
 
   if (authLoading) {
     return (
@@ -407,20 +398,6 @@ export default function App() {
         onSignIn={handleSignIn}
         busy={authBusy}
         error={authError}
-      />
-    );
-  }
-
-  if (onboardingRequired && settings) {
-    return (
-      <OnboardingFlow
-        profile={profile}
-        settings={settings}
-        initialAnswers={profile.onboarding_answers ?? {}}
-        busy={onboardingBusy}
-        error={onboardingError}
-        onSubmit={handleCompleteOnboarding}
-        onSignOut={handleSignOut}
       />
     );
   }
@@ -533,8 +510,8 @@ export default function App() {
 
       <main className="content-shell">
         {adminData && (activeView === 'operations' || activeView === 'employee-portal') ? (
-          activeView === 'employee-portal' && employeeData ? (
-            <EmployeePortal
+          activeView === 'employee-portal' ? (
+            employeeData ? <EmployeePortal
               data={employeeData}
               dateValue={selectedDate}
               onDateChange={setSelectedDate}
@@ -565,7 +542,14 @@ export default function App() {
               employeeExperienceElements={settings?.experience_builder_config.employee_elements}
               enabledFeatures={features}
               busy={dataBusy}
-            />
+            /> : (
+              <section className="employee-portal-shell">
+                <p className="empty-state">{portalError ?? 'Loading your employee portal…'}</p>
+                {portalError ? (
+                  <button type="button" onClick={() => void reloadData()}>Retry</button>
+                ) : null}
+              </section>
+            )
           ) : (
             <TimelineBoard
               employees={employees}
@@ -653,8 +637,6 @@ export default function App() {
             shiftIntelligence={adminData.shiftIntelligence}
             disciplineActions={adminData.disciplineActions}
             organizationName={settings?.organization_name ?? 'RealtimeSuite'}
-            onboardingEmailSubjectTemplate={settings?.onboarding_email_subject ?? ''}
-            onboardingEmailBodyTemplate={settings?.onboarding_email_body ?? ''}
             selectedDate={selectedDate}
             actorId={profile.id}
             defaultShiftBreakMinutes={settings?.default_shift_break_minutes ?? 30}
@@ -723,15 +705,7 @@ export default function App() {
                 extendedLeaveThresholdDays: settings.extended_leave_threshold_days,
                 enableAdminRealtimeNotifications: settings.enable_admin_realtime_notifications,
                 defaultTimelineWindowHours: settings.default_timeline_window_hours,
-                defaultShiftBreakMinutes: settings.default_shift_break_minutes,
-                enableOnboarding: settings.enable_onboarding,
-                onboardingVersion: settings.onboarding_version,
-                onboardingTitle: settings.onboarding_title,
-                onboardingDescription: settings.onboarding_description,
-                onboardingRequiredAcknowledgements: settings.onboarding_required_acknowledgements,
-                onboardingCustomQuestions: settings.onboarding_custom_questions,
-                onboardingEmailSubject: settings.onboarding_email_subject,
-                onboardingEmailBody: settings.onboarding_email_body
+                defaultShiftBreakMinutes: settings.default_shift_break_minutes
               }));
               setSettings(updated);
             }}

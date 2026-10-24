@@ -203,6 +203,23 @@ def _set_features(raw: str) -> None:
     print(json.dumps(result))
 
 
+def _set_org_name(raw: str) -> None:
+    name = " ".join(str(raw or "").split())
+    if not name:
+        raise SystemExit("Organization name cannot be empty.")
+    if len(name) > 120:
+        raise SystemExit("Organization name must be 120 characters or fewer.")
+    with session_scope() as session:
+        org = get_organization(session)
+        session.execute(
+            text(
+                "update public.organizations set name = :name, updated_at = now() where id = :id"
+            ),
+            {"name": name, "id": org["id"]},
+        )
+    print(json.dumps({"name": name}))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="realtimesuite", description="RealtimeSuite admin CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -237,6 +254,9 @@ def main() -> None:
     set_features = sub.add_parser("set-features", help="Update feature flags from JSON on stdin")
     set_features.add_argument("--json", help="JSON object of flags (otherwise read stdin)")
 
+    org_name = sub.add_parser("set-org-name", help="Rename the organization shown across the app")
+    org_name.add_argument("--name", required=True)
+
     sub.add_parser("init", help="Create the schema, organization and default work areas")
     sub.add_parser("describe-features", help="Print feature flag defaults as JSON")
     sub.add_parser("feature-schema", help="Print feature defaults, groups and labels as JSON")
@@ -267,6 +287,9 @@ def main() -> None:
         return
     if args.command == "set-features":
         _set_features(args.json if args.json is not None else sys.stdin.read())
+        return
+    if args.command == "set-org-name":
+        _set_org_name(args.name)
         return
 
     password = _read_password(args.password, getattr(args, "password_stdin", False))

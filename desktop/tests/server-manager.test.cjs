@@ -74,6 +74,41 @@ test('manager reads and writes .env inside the backend folder', async () => {
   assert.equal(reloaded.settings.autoRestart, false);
 });
 
+test('saveSettings accepts low ports and rejects out-of-range ones', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  await manager.ensureEnvFile();
+
+  const saved = await manager.saveSettings({ port: 53 });
+  assert.equal(saved.port, 53);
+  assert.equal(manager.readEnv().PORT, '53');
+
+  await assert.rejects(() => manager.saveSettings({ port: 0 }), /between 1 and 65535/);
+  await assert.rejects(() => manager.saveSettings({ port: 70000 }), /between 1 and 65535/);
+  await assert.rejects(() => manager.saveSettings({ port: 80.5 }), /between 1 and 65535/);
+  assert.equal(manager.settings.port, 53);
+});
+
+test('check reports whether privileged ports are usable', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  const check = await manager.check();
+  assert.equal(check.lowPortsAllowed, process.platform === 'win32');
+});
+
+test('setOrganizationName validates the name and goes through the admin CLI', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+
+  await assert.rejects(() => manager.setOrganizationName('   '), /Enter an organization name/);
+  await assert.rejects(() => manager.setOrganizationName('x'.repeat(121)), /120 characters/);
+  // Without a virtualenv the CLI path cannot run: proves the rename is applied to the database, not just .env.
+  await assert.rejects(() => manager.setOrganizationName('Kateo Ops'), /Python environment/);
+});
+
 test('status exposes local app and board URLs', async () => {
   const backendDir = tempBackend();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));

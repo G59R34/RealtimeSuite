@@ -160,10 +160,22 @@ class ServerManager extends EventEmitter {
   }
 
   async saveSettings(patch) {
+    if (patch && patch.port !== undefined) {
+      const port = Number(patch.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error('Port must be between 1 and 65535.');
+      }
+      if (port < 1024 && process.platform !== 'win32') {
+        throw new Error(`Port ${port} is privileged on this system. Use a port above 1024.`);
+      }
+    }
     this.settings = { ...this.settings, ...patch };
     await fsp.mkdir(this.userDataDir, { recursive: true });
     await fsp.writeFile(this.settingsFile, JSON.stringify(this.settings, null, 2), 'utf8');
-    if (this.settings.port) this.applyEnvValues({ PORT: String(this.settings.port) }).catch(() => undefined);
+    if (this.settings.port) {
+      // Await the write so a saved port is on disk before the server restarts.
+      await this.applyEnvValues({ PORT: String(this.settings.port) }).catch(() => undefined);
+    }
     this.emitStatus();
     return this.settings;
   }
@@ -356,6 +368,7 @@ class ServerManager extends EventEmitter {
     const env = this.readEnv();
     return {
       backendDir: this.backendDir,
+      lowPortsAllowed: process.platform === 'win32',
       backendExists: fs.existsSync(path.join(this.backendDir, 'app', 'main.py')),
       frontendBuilt: fs.existsSync(path.join(this.backendDir, '..', 'frontend', 'dist', 'index.html')),
       envExists,
@@ -369,7 +382,10 @@ class ServerManager extends EventEmitter {
         organizationName: env.ORGANIZATION_NAME || 'RealtimeSuite',
         adminEmail: env.BOOTSTRAP_ADMIN_EMAIL || 'admin@realtimesuite.local',
         opsboardTokenSet: Boolean(env.OPSBOARD_TOKEN),
-        jwtSecretSet: Boolean(env.JWT_SECRET && env.JWT_SECRET !== 'change-me-before-deploying')
+        jwtSecretSet: Boolean(env.JWT_SECRET && env.JWT_SECRET !== 'change-me-before-deploying'),
+        githubTokenSet: Boolean(env.GITHUB_TOKEN),
+        githubRepos: env.GITHUB_REPOS || '',
+        githubPollMinutes: Number(env.GITHUB_POLL_MINUTES || 5)
       }
     };
   }
@@ -490,6 +506,15 @@ class ServerManager extends EventEmitter {
     return result.output;
   }
 
+  async setOrganizationName(raw) {
+    const name = String(raw || '').trim();
+    if (!name) throw new Error('Enter an organization name.');
+    if (name.length > 120) throw new Error('Organization name must be 120 characters or fewer.');
+    const output = await this.cli(['set-org-name', '--name', name]);
+    const result = parseTrailingJson(output);
+    return result && typeof result.name === 'string' ? result.name : name;
+  }
+
   async listUsers() {
     const output = await this.cli(['list-users', '--json']);
     const users = parseTrailingJson(output);
@@ -573,6 +598,12 @@ class ServerManager extends EventEmitter {
     const env = this.readEnv();
     const port = Number(env.PORT || this.settings.port || 8000);
     const host = env.HOST || this.settings.host || '0.0.0.0';
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('The configured port must be between 1 and 65535.');
+    }
+    if (port < 1024 && process.platform !== 'win32') {
+      throw new Error(`Port ${port} is privileged on this system. Use a port above 1024 or run the manager with administrator rights.`);
+    }
     if (!(await this.portFree(port))) {
       throw new Error(`Port ${port} is already in use. Change the port in Settings or stop the other process.`);
     }

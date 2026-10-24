@@ -18,7 +18,6 @@ export const DEFAULT_FEATURES: FeatureFlags = {
   roster: true,
   payroll: true,
   discipline: true,
-  onboarding: true,
   training: true,
   work_preferences: true,
   messages: true,

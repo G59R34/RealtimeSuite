@@ -119,6 +119,23 @@ user-data folder (`python-venv`), because the application bundle is read-only.
 Server logs are written under `logs/server.log`. Environment variables are
 passed directly to the server process, so changes take effect after a restart.
 
+### GitHub pull request tasks
+
+The Settings tab has an optional **GitHub pull requests** card. Save a
+read-only personal access token, one or more `owner/repo` entries and a sync
+interval, then restart the server. The server polls GitHub on that interval and
+creates an unassigned task on the operations board for every open, non-draft
+pull request; the task is marked complete when the pull request is merged and
+cancelled when it is closed without merging. Clearing the repository list turns
+the sync off. The same values can be set directly in `.env`:
+
+```
+GITHUB_TOKEN=github_pat_...
+GITHUB_REPOS=acme/storefront, acme/api
+GITHUB_POLL_MINUTES=5
+GITHUB_TASK_MINUTES=60
+```
+
 ## Package the desktop app
 
 ```bash

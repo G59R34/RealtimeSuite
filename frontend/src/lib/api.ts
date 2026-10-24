@@ -6,7 +6,6 @@ import type {
   ExceptionRequestRow,
   ExperienceModule,
   ExperienceModuleType,
-  OnboardingQuestion,
   OrganizationExperienceBuilderConfig,
   OrganizationClockInLocationRow,
   OrganizationLoginBranding,
@@ -192,21 +191,6 @@ export async function fetchMyEffectiveAdminAccess(): Promise<boolean> {
   return Boolean(result.is_admin);
 }
 
-export async function saveMyOnboardingState(payload: {
-  answers: Record<string, unknown>;
-  completed: boolean;
-  completedVersion?: number;
-}) {
-  await apiFetch('/me/onboarding', {
-    method: 'POST',
-    body: jsonBody({
-      answers: payload.answers,
-      completed: payload.completed,
-      completed_version: payload.completedVersion ?? null
-    })
-  });
-}
-
 export async function updateProfileHelpfulInfo(userId: string, helpfulInfo: string) {
   await apiFetch('/me/profile', {
     method: 'PATCH',
@@ -320,22 +304,24 @@ const DEFAULT_LOGIN_ELEMENTS: OrganizationExperienceBuilderConfig['login_element
   change_org_label: 'Change'
 };
 const DEFAULT_EMPLOYEE_ELEMENTS: OrganizationExperienceBuilderConfig['employee_elements'] = {
-  operations_title: 'Operations Employee Portal',
-  scheduling_title: 'Scheduling Time & Attendance',
-  training_title: 'Employee Training Center',
+  operations_title: 'Home',
+  scheduling_title: 'Schedule',
+  training_title: 'Training',
   date_label: 'Date',
   clock_in_label: 'Clock In',
   clock_out_label: 'Clock Out',
   sign_out_label: 'Sign Out',
-  tab_operations: 'Operations Tasks',
-  tab_attendance: 'Time & Attendance',
-  tab_training: 'Trainings',
+  tab_operations: 'Home',
+  tab_attendance: 'Schedule',
+  tab_training: 'Training',
+  submenu_home: 'Overview',
+  submenu_requests: 'Requests',
   submenu_shifts: 'My Shifts',
   submenu_tasks: 'My Tasks',
   submenu_pool: 'Shift Pool',
   submenu_alerts: 'Alerts',
   submenu_messages: 'Messages',
-  submenu_profile: 'Profile Info',
+  submenu_profile: 'Profile & Preferences',
   submenu_preferences: 'Preferences',
   submenu_calendar: 'Calendar',
   submenu_overtime: 'Overtime',
@@ -360,12 +346,6 @@ const DEFAULT_OPSBOARD_SETTINGS: OrganizationExperienceBuilderConfig['opsboard_s
   default_horizon_hours: 8,
   default_refresh_seconds: 30
 };
-const DEFAULT_ONBOARDING_ACKS = [
-  'I understand attendance and punctuality expectations.',
-  'I understand safety and reporting expectations.',
-  'I understand communication and conduct expectations.'
-];
-
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -401,29 +381,6 @@ function normalizeBoundedInt(value: unknown, fallback: number, min: number, max:
 function normalizeTimelineWindowHours(value: unknown): 2 | 4 | 8 {
   const numeric = Number(value);
   return numeric === 2 || numeric === 4 || numeric === 8 ? numeric : 8;
-}
-
-function normalizeOnboardingQuestions(value: unknown): OnboardingQuestion[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((raw, index) => {
-      const question = asObject(raw);
-      const label = (asString(question.label) ?? '').trim();
-      if (!label) return null;
-      const typeRaw = (asString(question.type) ?? 'text').trim();
-      const type: OnboardingQuestion['type'] =
-        typeRaw === 'textarea' || typeRaw === 'boolean' || typeRaw === 'select' ? typeRaw : 'text';
-      return {
-        id: (asString(question.id) ?? '').trim() || `custom_question_${index + 1}`,
-        label,
-        type,
-        required: Boolean(question.required),
-        placeholder: (asString(question.placeholder) ?? '').trim(),
-        help_text: (asString(question.help_text) ?? '').trim(),
-        options: asStringArray(question.options)
-      } satisfies OnboardingQuestion;
-    })
-    .filter((question): question is OnboardingQuestion => Boolean(question));
 }
 
 function normalizeExperienceModule(value: unknown, fallbackId: string): ExperienceModule | null {
@@ -515,10 +472,6 @@ function normalizeProfile(row: Partial<ProfileRow>): ProfileRow {
     retail_chaos_stationary: Boolean(row.retail_chaos_stationary),
     admin_training_only: Boolean(row.admin_training_only),
     is_training_manager: Boolean(row.is_training_manager),
-    onboarding_started_at: row.onboarding_started_at ?? null,
-    onboarding_completed_at: row.onboarding_completed_at ?? null,
-    onboarding_completed_version: row.onboarding_completed_version ?? null,
-    onboarding_answers: asObject(row.onboarding_answers),
     created_at: String(row.created_at ?? ''),
     updated_at: String(row.updated_at ?? '')
   };
@@ -526,11 +479,6 @@ function normalizeProfile(row: Partial<ProfileRow>): ProfileRow {
 
 function normalizeOrganizationSettings(row: Record<string, unknown>): OrganizationSettings {
   const adminPortalLabel = (asString(row.admin_portal_label) ?? '').trim();
-  const onboardingTitle = (asString(row.onboarding_title) ?? '').trim();
-  const onboardingDescription = (asString(row.onboarding_description) ?? '').trim();
-  const onboardingEmailSubject = (asString(row.onboarding_email_subject) ?? '').trim();
-  const onboardingEmailBody = asString(row.onboarding_email_body) ?? '';
-  const acknowledgements = asStringArray(row.onboarding_required_acknowledgements);
   return {
     organization_id: String(row.id ?? ''),
     organization_name: String(row.name ?? 'Organization'),
@@ -553,27 +501,6 @@ function normalizeOrganizationSettings(row: Record<string, unknown>): Organizati
         : true,
     default_timeline_window_hours: normalizeTimelineWindowHours(row.default_timeline_window_hours),
     default_shift_break_minutes: normalizeNonNegativeInt(row.default_shift_break_minutes, 30),
-    enable_onboarding: Boolean(row.enable_onboarding),
-    onboarding_version: normalizePositiveInt(row.onboarding_version, 1),
-    onboarding_title: onboardingTitle || 'Welcome to RealtimeSuite',
-    onboarding_description: onboardingDescription,
-    onboarding_required_acknowledgements: acknowledgements.length > 0 ? acknowledgements : [...DEFAULT_ONBOARDING_ACKS],
-    onboarding_custom_questions: normalizeOnboardingQuestions(row.onboarding_custom_questions),
-    onboarding_email_subject: onboardingEmailSubject || 'Welcome to {{organization_name}}, {{employee_name}}',
-    onboarding_email_body:
-      onboardingEmailBody.trim() ||
-      [
-        'Hi {{employee_name}},',
-        '',
-        'Your RealtimeSuite account is ready.',
-        '',
-        'Login URL: {{login_url}}',
-        'Temporary Password: {{temporary_password}}',
-        '',
-        'Please complete onboarding after your first login and then change your password.',
-        '',
-        '- {{organization_name}}'
-      ].join('\n'),
     training_time_multiplier: normalizeBoundedInt(row.training_time_multiplier, 10, 1, 100),
     training_fake_employee_count: normalizeBoundedInt(row.training_fake_employee_count, 18, 5, 100),
     training_no_show_rate_percent: normalizeBoundedInt(row.training_no_show_rate_percent, 12, 0, 80),
@@ -629,14 +556,6 @@ export async function updateCurrentOrganizationSettings(payload: {
   enableAdminRealtimeNotifications: boolean;
   defaultTimelineWindowHours: 2 | 4 | 8;
   defaultShiftBreakMinutes: number;
-  enableOnboarding: boolean;
-  onboardingVersion: number;
-  onboardingTitle: string;
-  onboardingDescription: string;
-  onboardingRequiredAcknowledgements: string[];
-  onboardingCustomQuestions: OnboardingQuestion[];
-  onboardingEmailSubject: string;
-  onboardingEmailBody: string;
 }): Promise<OrganizationSettings> {
   const row = await apiFetch<Record<string, unknown>>('/settings', {
     method: 'PATCH',
@@ -655,15 +574,7 @@ export async function updateCurrentOrganizationSettings(payload: {
       extended_leave_threshold_days: payload.extendedLeaveThresholdDays,
       enable_admin_realtime_notifications: payload.enableAdminRealtimeNotifications,
       default_timeline_window_hours: payload.defaultTimelineWindowHours,
-      default_shift_break_minutes: payload.defaultShiftBreakMinutes,
-      enable_onboarding: payload.enableOnboarding,
-      onboarding_version: payload.onboardingVersion,
-      onboarding_title: payload.onboardingTitle,
-      onboarding_description: payload.onboardingDescription,
-      onboarding_required_acknowledgements: payload.onboardingRequiredAcknowledgements,
-      onboarding_custom_questions: payload.onboardingCustomQuestions,
-      onboarding_email_subject: payload.onboardingEmailSubject,
-      onboarding_email_body: payload.onboardingEmailBody
+      default_shift_break_minutes: payload.defaultShiftBreakMinutes
     })
   });
   return normalizeOrganizationSettings(row);

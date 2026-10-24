@@ -307,26 +307,28 @@ export function EmployeePortal({
   const showClockButton = enabledFeatures.clock_in || enabledFeatures.unscheduled_clock_in;
 
   const ui = {
-    operations_title: 'Operations Employee Portal',
-    scheduling_title: 'Scheduling Employee Time & Attendance',
-    training_title: 'Employee Training Center',
+    operations_title: 'Home',
+    scheduling_title: 'Schedule',
+    training_title: 'Training',
     date_label: 'Date',
     clock_in_label: 'Clock In',
     clock_out_label: 'Clock Out',
     sign_out_label: 'Sign Out',
-    tab_operations: 'Operations Tasks',
-    tab_scheduling: 'Scheduling Time & Attendance',
-    tab_training: 'Trainings',
+    tab_operations: 'Home',
+    tab_scheduling: 'Schedule',
+    tab_training: 'Training',
+    submenu_home: 'Overview',
     submenu_shifts: 'My Shifts',
     submenu_tasks: 'My Tasks',
     submenu_pool: 'Shift Pool',
     submenu_alerts: 'Alerts',
     submenu_messages: 'Messages',
-    submenu_profile: 'Profile Info',
+    submenu_profile: 'Profile & Preferences',
     submenu_preferences: 'Preferences',
     submenu_calendar: 'Calendar',
+    submenu_requests: 'Requests',
     submenu_overtime: 'Overtime',
-    submenu_swap: 'Swap Market',
+    submenu_swap: 'Shift Swaps',
     submenu_timeoff: 'Time Off',
     submenu_exceptions: 'Exceptions',
     kpi_shifts: 'Shifts On Date',
@@ -339,8 +341,9 @@ export function EmployeePortal({
     ...(employeeExperienceElements ?? {})
   };
   const [portalTab, setPortalTab] = useState<'operations' | 'scheduling' | 'training'>('operations');
-  const [operationsSubpage, setOperationsSubpage] = useState<'shifts' | 'tasks' | 'pool' | 'alerts' | 'messages' | 'profile' | 'preferences'>('shifts');
-  const [schedulingSubpage, setSchedulingSubpage] = useState<'calendar' | 'overtime' | 'swap' | 'timeoff' | 'exceptions'>('calendar');
+  const [navOpen, setNavOpen] = useState(false);
+  const [operationsSubpage, setOperationsSubpage] = useState<'home' | 'profile'>('home');
+  const [schedulingSubpage, setSchedulingSubpage] = useState<'calendar' | 'requests'>('calendar');
   const [ackNotes, setAckNotes] = useState<Record<string, string>>({});
   const [trainingNotes, setTrainingNotes] = useState<Record<string, string>>({});
   const [helpfulInfoDraft, setHelpfulInfoDraft] = useState(data.profile.helpful_info ?? '');
@@ -396,37 +399,23 @@ export function EmployeePortal({
   }, [data.workPreferences]);
 
   useEffect(() => {
-    const allowed = [
-      ...(showShifts ? ['shifts'] : []),
-      'profile',
-      ...(showTasks ? ['tasks'] : []),
-      ...(showShiftPool ? ['pool'] : []),
-      ...(showAlerts ? ['alerts'] : []),
-      ...(showMessages ? ['messages'] : []),
-      ...(showPreferences ? ['preferences'] : [])
-    ];
-    if (!allowed.includes(operationsSubpage)) {
-      setOperationsSubpage(showShifts ? 'shifts' : showTasks ? 'tasks' : 'profile');
-    }
-  }, [operationsSubpage, showShifts, showTasks, showShiftPool, showAlerts, showMessages, showPreferences]);
-
-  useEffect(() => {
-    const allowed = [
-      'calendar',
-      ...(showOvertime ? ['overtime'] : []),
-      ...(showSwaps ? ['swap'] : []),
-      ...(showTimeOff ? ['timeoff'] : []),
-      ...(showExceptions ? ['exceptions'] : [])
-    ];
-    if (!allowed.includes(schedulingSubpage)) {
-      setSchedulingSubpage('calendar');
-    }
-  }, [schedulingSubpage, showOvertime, showSwaps, showTimeOff, showExceptions]);
-
-  useEffect(() => {
     if (!showScheduling && portalTab === 'scheduling') setPortalTab('operations');
     if (!showTraining && portalTab === 'training') setPortalTab('operations');
   }, [portalTab, showScheduling, showTraining]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNavOpen(false);
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [navOpen]);
 
   const workAreaById = useMemo(() => new Map(data.workAreas.map((workArea) => [workArea.id, workArea])), [data.workAreas]);
 
@@ -598,6 +587,31 @@ export function EmployeePortal({
     }
     return scheduleCodeByDate.get(dateValue) ?? (sortedDayShifts.length === 0 ? 'DO' : 'SHIFT');
   }, [dateValue, scheduleCodeByDate, selectedDateApprovedTimeOff, sortedDayShifts.length]);
+
+  const selectedDateLabel = useMemo(() => {
+    const parsed = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return dateValue;
+    return parsed.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  }, [dateValue]);
+
+  const nextShift = useMemo(() => {
+    if (sortedDayShifts.length === 0) return null;
+    const nowMs = Date.now();
+    return sortedDayShifts.find((shift) => new Date(shift.end_at).getTime() >= nowMs) ?? sortedDayShifts[0];
+  }, [sortedDayShifts]);
+
+  const nextUpcomingShift = useMemo(() => {
+    const nowMs = Date.now();
+    return (
+      [...data.monthShifts]
+        .filter((shift) => new Date(shift.start_at).getTime() >= nowMs)
+        .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())[0] ?? null
+    );
+  }, [data.monthShifts]);
+
+  const pendingTrainings = useMemo(() => {
+    return sortedTrainingAssignments.filter((assignment) => assignment.status !== 'completed');
+  }, [sortedTrainingAssignments]);
 
   const dayShiftEnvelope = useMemo(() => {
     if (sortedDayShifts.length === 0) return null;
@@ -1036,15 +1050,26 @@ export function EmployeePortal({
   return (
     <section className="employee-portal-shell">
       <header className="employee-portal-header">
-        <div>
-          <h1>
-            {portalTab === 'operations'
-                ? ui.operations_title
-                : portalTab === 'scheduling'
-                  ? ui.scheduling_title
-                  : ui.training_title}
-          </h1>
-          <p>{data.profile.full_name || data.profile.email}</p>
+        <div className="employee-portal-identity">
+          <button
+            type="button"
+            className="employee-nav-toggle"
+            aria-label="Open employee menu"
+            aria-expanded={navOpen}
+            aria-controls="employee-nav"
+            onClick={() => setNavOpen(true)}
+          >
+            <span className="employee-nav-toggle-bars" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            <span>Menu</span>
+          </button>
+          <div>
+            <h1>Employee Portal</h1>
+            <p>{data.profile.full_name || data.profile.email}</p>
+          </div>
         </div>
 
         <div className="employee-portal-controls">
@@ -1061,133 +1086,147 @@ export function EmployeePortal({
         </div>
       </header>
 
-      <div className="employee-tabbar">
-        <button type="button" className={portalTab === 'operations' ? 'active' : ''} onClick={() => setPortalTab('operations')}>
-          {ui.tab_operations}
-        </button>
-        {showScheduling ? (
-          <button type="button" className={portalTab === 'scheduling' ? 'active' : ''} onClick={() => setPortalTab('scheduling')}>
-            {ui.tab_scheduling}
-          </button>
-        ) : null}
-        {showTraining ? (
-          <button type="button" className={portalTab === 'training' ? 'active' : ''} onClick={() => setPortalTab('training')}>
-            {ui.tab_training}
-          </button>
-        ) : null}
-      </div>
+      {navOpen ? (
+        <button
+          type="button"
+          className="employee-nav-backdrop"
+          aria-label="Close employee menu"
+          onClick={() => setNavOpen(false)}
+        />
+      ) : null}
 
-      <div className="employee-submenu">
-        {portalTab === 'operations' ? (
-          <>
-            {showShifts ? (
-              <button type="button" className={operationsSubpage === 'shifts' ? 'active' : ''} onClick={() => setOperationsSubpage('shifts')}>{ui.submenu_shifts}</button>
-            ) : null}
-            {showTasks ? (
-              <button type="button" className={operationsSubpage === 'tasks' ? 'active' : ''} onClick={() => setOperationsSubpage('tasks')}>{ui.submenu_tasks}</button>
-            ) : null}
-            {showShiftPool ? (
-              <button type="button" className={operationsSubpage === 'pool' ? 'active' : ''} onClick={() => setOperationsSubpage('pool')}>{ui.submenu_pool}</button>
-            ) : null}
-            {showAlerts ? (
-              <button type="button" className={operationsSubpage === 'alerts' ? 'active' : ''} onClick={() => setOperationsSubpage('alerts')}>{ui.submenu_alerts}</button>
-            ) : null}
-            {showMessages ? (
-              <button type="button" className={operationsSubpage === 'messages' ? 'active' : ''} onClick={() => setOperationsSubpage('messages')}>{ui.submenu_messages}</button>
-            ) : null}
-            <button type="button" className={operationsSubpage === 'profile' ? 'active' : ''} onClick={() => setOperationsSubpage('profile')}>{ui.submenu_profile}</button>
-            {showPreferences ? (
-              <button type="button" className={operationsSubpage === 'preferences' ? 'active' : ''} onClick={() => setOperationsSubpage('preferences')}>{ui.submenu_preferences}</button>
-            ) : null}
-          </>
-        ) : null}
-        {portalTab === 'scheduling' ? (
-          <>
-            <button type="button" className={schedulingSubpage === 'calendar' ? 'active' : ''} onClick={() => setSchedulingSubpage('calendar')}>{ui.submenu_calendar}</button>
-            {showOvertime ? (
-              <button type="button" className={schedulingSubpage === 'overtime' ? 'active' : ''} onClick={() => setSchedulingSubpage('overtime')}>{ui.submenu_overtime}</button>
-            ) : null}
-            {showSwaps ? (
-              <button type="button" className={schedulingSubpage === 'swap' ? 'active' : ''} onClick={() => setSchedulingSubpage('swap')}>{ui.submenu_swap}</button>
-            ) : null}
-            {showTimeOff ? (
-              <button type="button" className={schedulingSubpage === 'timeoff' ? 'active' : ''} onClick={() => setSchedulingSubpage('timeoff')}>{ui.submenu_timeoff}</button>
-            ) : null}
-            {showExceptions ? (
-              <button type="button" className={schedulingSubpage === 'exceptions' ? 'active' : ''} onClick={() => setSchedulingSubpage('exceptions')}>{ui.submenu_exceptions}</button>
-            ) : null}
-          </>
-        ) : null}
-        {portalTab === 'training' ? (
-          <button type="button" className="active">My Trainings</button>
-        ) : null}
-      </div>
+      <nav id="employee-nav" className={navOpen ? 'employee-nav open' : 'employee-nav'} aria-label="Employee menu">
+        <div className="employee-nav-head">
+          <div>
+            <strong>{data.profile.full_name || data.profile.email}</strong>
+            <span>Employee menu</span>
+          </div>
+          <button type="button" className="employee-nav-close" aria-label="Close employee menu" onClick={() => setNavOpen(false)}>
+            ✕
+          </button>
+        </div>
+
+        <div className="employee-tabbar">
+          <button type="button" className={portalTab === 'operations' ? 'active' : ''} onClick={() => { setPortalTab('operations'); setNavOpen(false); }}>
+            {ui.tab_operations}
+          </button>
+          {showScheduling ? (
+            <button type="button" className={portalTab === 'scheduling' ? 'active' : ''} onClick={() => { setPortalTab('scheduling'); setNavOpen(false); }}>
+              {ui.tab_scheduling}
+            </button>
+          ) : null}
+          {showTraining ? (
+            <button type="button" className={portalTab === 'training' ? 'active' : ''} onClick={() => { setPortalTab('training'); setNavOpen(false); }}>
+              {ui.tab_training}
+            </button>
+          ) : null}
+        </div>
+
+        <div className="employee-submenu">
+          {portalTab === 'operations' ? (
+            <>
+              <button type="button" className={operationsSubpage === 'home' ? 'active' : ''} onClick={() => { setOperationsSubpage('home'); setNavOpen(false); }}>{ui.submenu_home}</button>
+              <button type="button" className={operationsSubpage === 'profile' ? 'active' : ''} onClick={() => { setOperationsSubpage('profile'); setNavOpen(false); }}>{ui.submenu_profile}</button>
+            </>
+          ) : null}
+          {portalTab === 'scheduling' ? (
+            <>
+              <button type="button" className={schedulingSubpage === 'calendar' ? 'active' : ''} onClick={() => { setSchedulingSubpage('calendar'); setNavOpen(false); }}>{ui.submenu_calendar}</button>
+              <button type="button" className={schedulingSubpage === 'requests' ? 'active' : ''} onClick={() => { setSchedulingSubpage('requests'); setNavOpen(false); }}>{ui.submenu_requests}</button>
+            </>
+          ) : null}
+        </div>
+      </nav>
 
       {employeeExperienceModules.length > 0 ? (
         <ExperienceModules modules={employeeExperienceModules} />
       ) : null}
 
-      <section className="employee-kpi-grid">
-        <article className="employee-kpi-card">
-          <span>{ui.kpi_shifts}</span>
-          <strong>{sortedDayShifts.length}</strong>
-        </article>
-        <article className="employee-kpi-card">
-          <span>{ui.kpi_pending_ack}</span>
-          <strong>{pendingTaskCount}</strong>
-        </article>
-        <article className="employee-kpi-card">
-          <span>{ui.kpi_date_code}</span>
-          <strong>{selectedDateCode}</strong>
-        </article>
-        <article className="employee-kpi-card">
-          <span>{ui.kpi_unread_messages}</span>
-          <strong>{unreadMessageCount}</strong>
-        </article>
-        <article className="employee-kpi-card">
-          <span>{ui.kpi_pool_openings}</span>
-          <strong>{availablePoolShifts.length}</strong>
-        </article>
-        <article className="employee-kpi-card">
-          <span>{ui.kpi_unread_alerts}</span>
-          <strong>{unreadNotificationCount}</strong>
-        </article>
-        {
-          <article className="employee-kpi-card">
-            <span>{ui.kpi_pending_trainings}</span>
-            <strong>{pendingTrainingCount}</strong>
-          </article>
-        }
-      </section>
-
-      {((portalTab === 'operations' && ['alerts', 'messages', 'profile', 'preferences'].includes(operationsSubpage))) ? (
-      <div className="employee-support-grid">
-        {(operationsSubpage === 'alerts') ? (
-        <article className="employee-card">
-          <h2>Alerts</h2>
-          {data.notifications.length === 0 ? (
-            <p className="empty-state">No alerts yet.</p>
+      {portalTab === 'operations' && operationsSubpage === 'home' ? (
+      <section className="employee-glance" aria-label="Today at a glance">
+        <div className="employee-glance-block employee-glance-date">
+          <span className="employee-glance-eyebrow">{isTodaySelected ? 'Today' : 'Selected day'}</span>
+          <strong>{selectedDateLabel}</strong>
+          {selectedDateCode === 'SHIFT' ? (
+            <span className="employee-badge neutral">Scheduled</span>
           ) : (
-            <ul className="employee-message-list">
-              {data.notifications.slice(0, 20).map((entry) => (
-                <li key={entry.id} className={entry.read_at ? 'employee-message-row' : 'employee-message-row unread'}>
-                  <strong>{entry.title}</strong>
-                  <span>{entry.body || 'No details'}</span>
-                  <span>{new Date(entry.created_at).toLocaleString()}</span>
-                  {!entry.read_at ? (
-                    <div className="employee-task-ack-row">
-                      <button type="button" onClick={() => void markNotificationRead(entry.id)} disabled={busy}>
-                        Mark Read
-                      </button>
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <span className={`code-pill code-${selectedDateCode.toLowerCase()}`}>{selectedDateCode}</span>
           )}
-        </article>
-        ) : null}
+        </div>
 
+        <div className="employee-glance-block employee-glance-shift">
+          <span className="employee-glance-eyebrow">{nextShift ? 'Shift' : 'No shift'}</span>
+          {nextShift ? (
+            <>
+              <strong>
+                {toReadableTime(nextShift.start_at)}–{toReadableTime(nextShift.end_at)}
+                <span className={`employee-badge ${nextShift.status === 'on_duty' ? 'success' : 'neutral'}`}>
+                  {statusLabel(nextShift.status)}
+                </span>
+              </strong>
+              <small>
+                {resolveAreaName(nextShift.work_area_id, workAreaById)}
+                {nextShift.pay_multiplier > 1 ? ` · OT ${nextShift.pay_multiplier.toFixed(1)}x` : ''}
+                {nextShift.clocked_in_at && !nextShift.clocked_out_at ? ' · On the clock' : ''}
+              </small>
+            </>
+          ) : (
+            <>
+              <strong>
+                {selectedDateApprovedTimeOff
+                  ? `Authorized time off (${statusLabel(selectedDateApprovedTimeOff.requestType)})`
+                  : 'No shift scheduled'}
+              </strong>
+              <small>
+                {selectedDateApprovedTimeOff
+                  ? `${selectedDateApprovedTimeOff.startDate} → ${selectedDateApprovedTimeOff.endDate}`
+                  : nextUpcomingShift
+                    ? `Next shift: ${toReadableDate(nextUpcomingShift.start_at)}`
+                    : 'Nothing else on the schedule.'}
+              </small>
+            </>
+          )}
+        </div>
+
+        <div className="employee-glance-block employee-glance-stats">
+          <span className="employee-glance-stat">
+            <strong>{pendingTaskCount}</strong>
+            <span>{pendingTaskCount === 1 ? 'task to acknowledge' : 'tasks to acknowledge'}</span>
+          </span>
+          <span className="employee-glance-stat">
+            <strong>{unreadNotificationCount + unreadMessageCount}</strong>
+            <span>unread alerts & messages</span>
+          </span>
+          {showShiftPool ? (
+            <span className="employee-glance-stat">
+              <strong>{availablePoolShifts.length}</strong>
+              <span>{availablePoolShifts.length === 1 ? 'open shift' : 'open shifts'}</span>
+            </span>
+          ) : null}
+          {showTraining ? (
+            <span className="employee-glance-stat">
+              <strong>{pendingTrainingCount}</strong>
+              <span>{pendingTrainingCount === 1 ? 'training pending' : 'trainings pending'}</span>
+            </span>
+          ) : null}
+        </div>
+
+        {showClockButton ? (
+          <button
+            type="button"
+            className="employee-glance-punch"
+            onClick={() => void globalPunch()}
+            disabled={busy}
+            title={isTodaySelected ? '' : 'Clock In/Out is only available for today.'}
+          >
+            {hasOpenShift ? ui.clock_out_label : ui.clock_in_label}
+          </button>
+        ) : null}
+      </section>
+      ) : null}
+
+      {portalTab === 'operations' && operationsSubpage === 'profile' ? (
+      <div className="employee-portal-grid employee-portal-grid-profile">
         {operationsSubpage === 'profile' ? (
           <article className="employee-card">
             <h2>Profile Information For Managers</h2>
@@ -1208,7 +1247,7 @@ export function EmployeePortal({
           </article>
         ) : null}
 
-        {operationsSubpage === 'preferences' ? (
+        {showPreferences ? (
           <article className="employee-card">
             <h2>Work Preferences</h2>
             <label>
@@ -1251,82 +1290,33 @@ export function EmployeePortal({
           </article>
         ) : null}
 
-        {(operationsSubpage === 'messages') ? (
-        <article className="employee-card">
-          <h2>Messages</h2>
-          <form className="employee-request-form" onSubmit={sendMessageToAdmin}>
-            <label>
-              Send To Leadership
-              <select value={messageRecipientId} onChange={(event) => setMessageRecipientId(event.target.value)} required>
-                {data.adminContacts.map((admin) => (
-                  <option key={admin.id} value={admin.id}>{admin.full_name || admin.email}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Subject
-              <input value={messageSubject} onChange={(event) => setMessageSubject(event.target.value)} placeholder="Optional" />
-            </label>
-            <label className="full-width">
-              Message
-              <textarea
-                rows={3}
-                value={messageBody}
-                onChange={(event) => setMessageBody(event.target.value)}
-                required
-              />
-            </label>
-            <button type="submit" disabled={busy || !messageRecipientId || !messageBody.trim()}>
-              Send Message
-            </button>
-          </form>
-
-          {data.messages.length === 0 ? (
-            <p className="empty-state">No messages yet.</p>
-          ) : (
-            <ul className="employee-message-list">
-              {data.messages.slice(0, 20).map((entry) => {
-                const sender = entry.sender_id === data.profile.id
-                  ? 'You'
-                  : (data.adminContacts.find((admin) => admin.id === entry.sender_id)?.full_name || 'Leadership');
-                const isUnread = entry.recipient_id === data.profile.id && !entry.read_at;
-                return (
-                  <li key={entry.id} className={isUnread ? 'employee-message-row unread' : 'employee-message-row'}>
-                    <strong>{entry.subject?.trim() || 'No Subject'}</strong>
-                    <span>From: {sender}</span>
-                    <span>{entry.message}</span>
-                    <span>{new Date(entry.created_at).toLocaleString()} | {entry.read_at ? 'Read' : 'Unread'}</span>
-                    {isUnread ? (
-                      <div className="employee-task-ack-row">
-                        <button type="button" onClick={() => void markAsRead(entry.id)} disabled={busy}>
-                          Mark Read
-                        </button>
-                      </div>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </article>
-        ) : null}
       </div>
       ) : null}
 
-      {portalTab === 'operations' ? (
-        <div className="employee-portal-grid employee-portal-grid-single">
-          {(operationsSubpage === 'shifts') ? (
+      {portalTab === 'operations' && operationsSubpage === 'home' ? (
+        <div className="employee-portal-grid employee-home-grid">
+          <div className="employee-home-column">
+          {showShifts ? (
           <article className="employee-card">
             <div className="employee-section-head">
               <h2>{`My Shifts (${dateValue})`}</h2>
               <span>{sortedDayShifts.length} scheduled</span>
             </div>
             {sortedDayShifts.length === 0 ? (
-              <p className="empty-state">
-                {selectedDateApprovedTimeOff
-                  ? `ATO - Authorized time off (${statusLabel(selectedDateApprovedTimeOff.requestType)})`
-                  : 'No shifts scheduled for this date.'}
-              </p>
+              <div className="employee-empty-panel">
+                <strong>
+                  {selectedDateApprovedTimeOff
+                    ? `Authorized time off (${statusLabel(selectedDateApprovedTimeOff.requestType)})`
+                    : 'No shift scheduled for this date'}
+                </strong>
+                <span>
+                  {selectedDateApprovedTimeOff
+                    ? `${selectedDateApprovedTimeOff.startDate} → ${selectedDateApprovedTimeOff.endDate}`
+                    : nextUpcomingShift
+                      ? `Next shift: ${toReadableDate(nextUpcomingShift.start_at)}`
+                      : 'Nothing else on the schedule.'}
+                </span>
+              </div>
             ) : (
               <ul>
                 {sortedDayShifts.map((shift) => {
@@ -1360,14 +1350,14 @@ export function EmployeePortal({
           </article>
           ) : null}
 
-          {(operationsSubpage === 'tasks') ? (
+          {showTasks ? (
           <article className="employee-card">
             <div className="employee-section-head">
-              <h2>My Tasks</h2>
+              <h2>{ui.submenu_tasks}</h2>
               <span>{pendingTaskCount} pending acknowledgment</span>
             </div>
             {sortedTaskAssignments.length === 0 ? (
-              <p className="empty-state">No assigned tasks for this date.</p>
+              <p className="empty-state">You're all caught up — no tasks assigned for this date.</p>
             ) : (
               <ul className="employee-task-list-simple">
                 {sortedTaskAssignments.map((assignment) => {
@@ -1415,10 +1405,10 @@ export function EmployeePortal({
           </article>
           ) : null}
 
-          {operationsSubpage === 'pool' ? (
+          {showShiftPool ? (
             <article className="employee-card employee-card-wide">
             <div className="employee-section-head">
-              <h2>Shift Pool</h2>
+              <h2>{ui.submenu_pool}</h2>
               <span>{availablePoolShifts.length} available shift(s)</span>
             </div>
             {availablePoolShifts.length === 0 ? (
@@ -1455,6 +1445,137 @@ export function EmployeePortal({
             )}
             </article>
           ) : null}
+          </div>
+
+          <div className="employee-home-column">
+          {showAlerts || showMessages ? (
+            <article className="employee-card employee-inbox-card">
+              <div className="employee-section-head">
+                <h2>Inbox</h2>
+                <span>{unreadNotificationCount + unreadMessageCount} unread</span>
+              </div>
+
+              {showAlerts ? (
+                <section className="employee-inbox-section">
+                  <h3>{ui.submenu_alerts}</h3>
+                  {data.notifications.length === 0 ? (
+                    <p className="empty-state">No alerts yet.</p>
+                  ) : (
+                    <ul className="employee-message-list">
+                      {data.notifications.slice(0, 5).map((entry) => (
+                        <li key={entry.id} className={entry.read_at ? 'employee-message-row' : 'employee-message-row unread'}>
+                          <strong>{entry.title}</strong>
+                          <span>{entry.body || 'No details'}</span>
+                          <span>{new Date(entry.created_at).toLocaleString()}</span>
+                          {!entry.read_at ? (
+                            <div className="employee-task-ack-row">
+                              <button type="button" onClick={() => void markNotificationRead(entry.id)} disabled={busy}>
+                                Mark Read
+                              </button>
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              ) : null}
+
+              {showMessages ? (
+                <section className="employee-inbox-section">
+                  <h3>{ui.submenu_messages}</h3>
+                  {data.messages.length === 0 ? (
+                    <p className="empty-state">No messages yet.</p>
+                  ) : (
+                    <ul className="employee-message-list">
+                      {data.messages.slice(0, 5).map((entry) => {
+                        const sender = entry.sender_id === data.profile.id
+                          ? 'You'
+                          : (data.adminContacts.find((admin) => admin.id === entry.sender_id)?.full_name || 'Leadership');
+                        const isUnread = entry.recipient_id === data.profile.id && !entry.read_at;
+                        return (
+                          <li key={entry.id} className={isUnread ? 'employee-message-row unread' : 'employee-message-row'}>
+                            <strong>{entry.subject?.trim() || 'No Subject'}</strong>
+                            <span>From: {sender}</span>
+                            <span>{entry.message}</span>
+                            <span>{new Date(entry.created_at).toLocaleString()} | {entry.read_at ? 'Read' : 'Unread'}</span>
+                            {isUnread ? (
+                              <div className="employee-task-ack-row">
+                                <button type="button" onClick={() => void markAsRead(entry.id)} disabled={busy}>
+                                  Mark Read
+                                </button>
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  <details className="employee-inline-details">
+                    <summary>Message leadership</summary>
+                    <form className="employee-request-form" onSubmit={sendMessageToAdmin}>
+                      <label>
+                        Send To Leadership
+                        <select value={messageRecipientId} onChange={(event) => setMessageRecipientId(event.target.value)} required>
+                          {data.adminContacts.map((admin) => (
+                            <option key={admin.id} value={admin.id}>{admin.full_name || admin.email}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Subject
+                        <input value={messageSubject} onChange={(event) => setMessageSubject(event.target.value)} placeholder="Optional" />
+                      </label>
+                      <label className="full-width">
+                        Message
+                        <textarea
+                          rows={3}
+                          value={messageBody}
+                          onChange={(event) => setMessageBody(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <button type="submit" disabled={busy || !messageRecipientId || !messageBody.trim()}>
+                        Send Message
+                      </button>
+                    </form>
+                  </details>
+                </section>
+              ) : null}
+            </article>
+          ) : null}
+
+          {showTraining ? (
+            <article className="employee-card">
+              <div className="employee-section-head">
+                <h2>{ui.tab_training}</h2>
+                <span>{pendingTrainingCount} pending</span>
+              </div>
+              {pendingTrainings.length === 0 ? (
+                <p className="empty-state">All assigned training is complete.</p>
+              ) : (
+                <ul className="employee-task-list-simple">
+                  {pendingTrainings.slice(0, 3).map((assignment) => (
+                    <li key={assignment.id}>
+                      <div className="employee-row-head">
+                        <strong>{assignment.course?.title || 'Training'}</strong>
+                        <span className="employee-badge warn">{statusLabel(assignment.status)}</span>
+                      </div>
+                      <span>
+                        {assignment.due_at ? `Due ${new Date(assignment.due_at).toLocaleDateString()}` : 'No due date'}
+                        {' · '}
+                        {assignment.course?.estimated_minutes ?? 0} min
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="employee-task-ack-row">
+                <button type="button" onClick={() => setPortalTab('training')}>Open training</button>
+              </div>
+            </article>
+          ) : null}
+          </div>
         </div>
       ) : portalTab === 'scheduling' ? (
         <div className="employee-portal-grid employee-portal-grid-scheduling employee-portal-grid-single">
@@ -1544,7 +1665,9 @@ export function EmployeePortal({
           </article>
           ) : null}
 
-          {schedulingSubpage === 'overtime' ? (
+          {schedulingSubpage === 'requests' && showOvertime ? (
+          <details className="employee-request-section">
+            <summary>{ui.submenu_overtime}</summary>
           <article className="employee-card">
             <h2>Request Same-Day Overtime</h2>
             {dayShiftEnvelope ? (
@@ -1602,9 +1725,12 @@ export function EmployeePortal({
               </ul>
             )}
           </article>
+          </details>
           ) : null}
 
-          {schedulingSubpage === 'swap' ? (
+          {schedulingSubpage === 'requests' && showSwaps ? (
+          <details className="employee-request-section">
+            <summary>{ui.submenu_swap}</summary>
           <article className="employee-card">
             <h2>Shift Swap Marketplace</h2>
             <form className="employee-request-form" onSubmit={createSwapRequest}>
@@ -1705,9 +1831,12 @@ export function EmployeePortal({
               </ul>
             )}
           </article>
+          </details>
           ) : null}
 
-          {schedulingSubpage === 'timeoff' ? (
+          {schedulingSubpage === 'requests' && showTimeOff ? (
+          <details className="employee-request-section" open>
+            <summary>{ui.submenu_timeoff}</summary>
           <article className="employee-card">
             <h2>Request Time Off</h2>
             <form className="employee-request-form" onSubmit={submitTimeOff}>
@@ -1779,9 +1908,12 @@ export function EmployeePortal({
               </ul>
             )}
           </article>
+          </details>
           ) : null}
 
-          {schedulingSubpage === 'exceptions' ? (
+          {schedulingSubpage === 'requests' && showExceptions ? (
+          <details className="employee-request-section">
+            <summary>{ui.submenu_exceptions}</summary>
           <article className="employee-card">
             <h2>Submit Exception Request</h2>
             <form className="employee-request-form" onSubmit={submitException}>
@@ -1861,9 +1993,10 @@ export function EmployeePortal({
               </ul>
             )}
           </article>
+          </details>
           ) : null}
         </div>
-      ) : (
+      ) : portalTab === 'training' ? (
         <div className="employee-portal-grid employee-portal-grid-single">
           <article className="employee-card employee-card-wide">
             <div className="employee-section-head">
@@ -1920,7 +2053,7 @@ export function EmployeePortal({
             )}
           </article>
         </div>
-      )}
+      ) : null}
 
       {error ? <p className="form-error">{error}</p> : null}
       {message ? <p className="form-message">{message}</p> : null}

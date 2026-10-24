@@ -196,6 +196,13 @@ function registerIpc() {
     const detail = await manager.resetPassword(payload || {});
     return { detail };
   });
+  ipcMain.handle('manager:set-org-name', async (_event, name) => {
+    try {
+      return { ok: true, name: await manager.setOrganizationName(name) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
   ipcMain.handle('manager:list-users', async () => {
     try {
       return { ok: true, users: await manager.listUsers() };

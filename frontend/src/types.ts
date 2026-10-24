@@ -57,24 +57,8 @@ export type ProfileRow = {
   retail_chaos_stationary?: boolean;
   admin_training_only?: boolean;
   is_training_manager?: boolean;
-  onboarding_started_at?: string | null;
-  onboarding_completed_at?: string | null;
-  onboarding_completed_version?: number | null;
-  onboarding_answers?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
-};
-
-export type OnboardingQuestionType = 'text' | 'textarea' | 'boolean' | 'select';
-
-export type OnboardingQuestion = {
-  id: string;
-  label: string;
-  type: OnboardingQuestionType;
-  required: boolean;
-  placeholder: string;
-  help_text: string;
-  options: string[];
 };
 
 export type WorkAreaRow = {
@@ -149,6 +133,8 @@ export type TaskRow = {
   status: TaskStatus;
   priority: TaskPriority;
   source_system: string;
+  external_id?: string | null;
+  external_url?: string | null;
   start_at: string;
   end_at: string;
   work_area_id: string | null;
@@ -387,14 +373,6 @@ export type OrganizationSettings = {
   enable_admin_realtime_notifications: boolean;
   default_timeline_window_hours: 2 | 4 | 8;
   default_shift_break_minutes: number;
-  enable_onboarding: boolean;
-  onboarding_version: number;
-  onboarding_title: string;
-  onboarding_description: string;
-  onboarding_required_acknowledgements: string[];
-  onboarding_custom_questions: OnboardingQuestion[];
-  onboarding_email_subject: string;
-  onboarding_email_body: string;
   training_time_multiplier: number;
   training_fake_employee_count: number;
   training_no_show_rate_percent: number;
@@ -456,6 +434,8 @@ export type OrganizationExperienceBuilderConfig = {
     tab_operations: string;
     tab_attendance: string;
     tab_training: string;
+    submenu_home: string;
+    submenu_requests: string;
     submenu_shifts: string;
     submenu_tasks: string;
     submenu_pool: string;

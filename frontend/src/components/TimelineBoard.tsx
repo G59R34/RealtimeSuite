@@ -520,7 +520,10 @@ export function TimelineBoard({
   const unassignedTasks = useMemo(() => {
     const priorityRank: Record<TaskPriority, number> = { critical: 0, high: 1, normal: 2, low: 3 };
     return tasks
-      .filter((task) => !assignedTaskIds.has(task.id) && task.status !== 'cancelled')
+      .filter(
+        (task) =>
+          !assignedTaskIds.has(task.id) && (task.status === 'pending' || task.status === 'in_progress')
+      )
       .filter(taskVisible)
       .sort((a, b) =>
         priorityRank[a.priority] - priorityRank[b.priority] ||

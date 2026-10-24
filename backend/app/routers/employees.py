@@ -169,43 +169,6 @@ def update_my_profile(
     return {"ok": True}
 
 
-@router.post("/me/onboarding")
-def save_onboarding(
-    payload: dict = Body(...),
-    user: RequestUser = Depends(get_current_user),
-    session: Session = Depends(get_db),
-) -> dict:
-    completed = bool(payload.get("completed"))
-    version = payload.get("completed_version")
-    now = datetime.now().astimezone()
-    session.execute(
-        text(
-            """
-            update public.profiles
-            set onboarding_started_at = :now,
-                onboarding_completed_at = case when :completed then :now else null end,
-                onboarding_completed_version = :version,
-                onboarding_answers = cast(:answers as jsonb)
-            where id = :id
-            """
-        ),
-        {
-            "now": now,
-            "completed": completed,
-            "version": int(version) if completed and version else None,
-            "answers": Body_default_json(payload.get("answers")),
-            "id": user.id,
-        },
-    )
-    return {"ok": True}
-
-
-def Body_default_json(value) -> str:
-    import json
-
-    return json.dumps(value if isinstance(value, dict) else {})
-
-
 @router.post("/me/work-preferences")
 def save_work_preferences(
     payload: dict = Body(...),

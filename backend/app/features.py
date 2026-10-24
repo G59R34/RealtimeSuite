@@ -17,7 +17,6 @@ DEFAULT_FEATURE_FLAGS: dict[str, bool] = {
     "roster": True,
     "payroll": True,
     "discipline": True,
-    "onboarding": True,
     "training": True,
     "work_preferences": True,
     # Communication
@@ -48,7 +47,6 @@ FEATURE_META: dict[str, dict[str, str]] = {
     "roster": {"label": "Employee roster", "description": "Roster view with assignments and contact details."},
     "payroll": {"label": "Pay rates", "description": "Hourly rates and pay-rate editing."},
     "discipline": {"label": "Discipline", "description": "Discipline actions and pay-rate consequences."},
-    "onboarding": {"label": "Onboarding", "description": "First-login onboarding steps and acknowledgements."},
     "training": {"label": "Training", "description": "Training courses and assigned training."},
     "work_preferences": {"label": "Work preferences", "description": "Weekly hour limits and availability preferences."},
     "messages": {"label": "Messages", "description": "Admin-to-employee messages."},
@@ -81,7 +79,6 @@ FEATURE_GROUPS: dict[str, list[str]] = {
         "roster",
         "payroll",
         "discipline",
-        "onboarding",
         "training",
         "work_preferences",
     ],

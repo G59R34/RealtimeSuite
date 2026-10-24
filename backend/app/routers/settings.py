@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from pathlib import Path
@@ -32,14 +33,6 @@ ORG_EDITABLE = {
     "enable_admin_realtime_notifications",
     "default_timeline_window_hours",
     "default_shift_break_minutes",
-    "enable_onboarding",
-    "onboarding_version",
-    "onboarding_title",
-    "onboarding_description",
-    "onboarding_required_acknowledgements",
-    "onboarding_custom_questions",
-    "onboarding_email_subject",
-    "onboarding_email_body",
 }
 
 ALLOWED_IMAGE_TYPES = {
@@ -92,9 +85,11 @@ def update_settings(
     for key, value in updates.items():
         if key in {"experience_builder_config", "onboarding_custom_questions"}:
             assignments.append(f"{key} = cast(:{key} as jsonb)")
+            # psycopg cannot adapt dict/list parameters; send JSON text for the cast.
+            params[key] = value if isinstance(value, str) else json.dumps(value)
         else:
             assignments.append(f"{key} = :{key}")
-        params[key] = value
+            params[key] = value
     session.execute(
         text(f"update public.organizations set {', '.join(assignments)} where id = :id"),
         params,

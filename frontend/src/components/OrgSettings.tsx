@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import type { OnboardingQuestion, OrganizationExperienceBuilderConfig, OrganizationSettings } from '../types';
+import type { OrganizationExperienceBuilderConfig, OrganizationSettings } from '../types';
 import { ClockInLocationsSettings } from './ClockInLocationsSettings';
 
 type OrgSettingsProps = {
@@ -24,14 +24,6 @@ type OrgSettingsProps = {
     enableAdminRealtimeNotifications: boolean;
     defaultTimelineWindowHours: 2 | 4 | 8;
     defaultShiftBreakMinutes: number;
-    enableOnboarding: boolean;
-    onboardingVersion: number;
-    onboardingTitle: string;
-    onboardingDescription: string;
-    onboardingRequiredAcknowledgements: string[];
-    onboardingCustomQuestions: OnboardingQuestion[];
-    onboardingEmailSubject: string;
-    onboardingEmailBody: string;
   }) => Promise<void>;
 };
 
@@ -46,14 +38,6 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
   const [loginAnnouncement, setLoginAnnouncement] = useState('');
   const [timelineWindowHours, setTimelineWindowHours] = useState<2 | 4 | 8>(8);
   const [defaultBreakMinutes, setDefaultBreakMinutes] = useState(30);
-  const [enableOnboarding, setEnableOnboarding] = useState(false);
-  const [onboardingVersion, setOnboardingVersion] = useState(1);
-  const [onboardingTitle, setOnboardingTitle] = useState('Welcome to RealtimeSuite');
-  const [onboardingDescription, setOnboardingDescription] = useState('');
-  const [acknowledgements, setAcknowledgements] = useState('');
-  const [onboardingEmailSubject, setOnboardingEmailSubject] = useState('');
-  const [onboardingEmailBody, setOnboardingEmailBody] = useState('');
-  const [customQuestions, setCustomQuestions] = useState<OnboardingQuestion[]>([]);
   const [experienceBuilderConfig, setExperienceBuilderConfig] = useState<OrganizationExperienceBuilderConfig | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,14 +56,6 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
     setLoginAnnouncement(settings.login_announcement || '');
     setTimelineWindowHours(settings.default_timeline_window_hours);
     setDefaultBreakMinutes(settings.default_shift_break_minutes);
-    setEnableOnboarding(settings.enable_onboarding);
-    setOnboardingVersion(settings.onboarding_version);
-    setOnboardingTitle(settings.onboarding_title || 'Welcome to RealtimeSuite');
-    setOnboardingDescription(settings.onboarding_description || '');
-    setAcknowledgements(settings.onboarding_required_acknowledgements.join('\n'));
-    setOnboardingEmailSubject(settings.onboarding_email_subject || '');
-    setOnboardingEmailBody(settings.onboarding_email_body || '');
-    setCustomQuestions(settings.onboarding_custom_questions);
     setExperienceBuilderConfig(settings.experience_builder_config);
   }, [settings]);
 
@@ -122,18 +98,7 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
         extendedLeaveThresholdDays: settings.extended_leave_threshold_days,
         enableAdminRealtimeNotifications: settings.enable_admin_realtime_notifications,
         defaultTimelineWindowHours: timelineWindowHours,
-        defaultShiftBreakMinutes: defaultBreakMinutes,
-        enableOnboarding,
-        onboardingVersion,
-        onboardingTitle,
-        onboardingDescription,
-        onboardingRequiredAcknowledgements: acknowledgements
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean),
-        onboardingCustomQuestions: customQuestions,
-        onboardingEmailSubject,
-        onboardingEmailBody
+        defaultShiftBreakMinutes: defaultBreakMinutes
       });
       setStatus('Organization settings saved.');
     } catch (err) {
@@ -241,68 +206,6 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
             />
           </label>
           {loginBackgroundImageUrl ? <img className="settings-asset-preview" src={loginBackgroundImageUrl} alt="Login background" /> : null}
-        </article>
-
-        <article className="weta-admin-card">
-          <h3>Employee Onboarding</h3>
-          <label className="employee-pref-checkbox">
-            <input
-              type="checkbox"
-              checked={enableOnboarding}
-              onChange={(event) => setEnableOnboarding(event.target.checked)}
-              disabled={disabled}
-            />
-            Require first-login onboarding
-          </label>
-          <label>
-            Onboarding version
-            <input
-              type="number"
-              min={1}
-              value={onboardingVersion}
-              onChange={(event) => setOnboardingVersion(Number(event.target.value))}
-              disabled={disabled}
-            />
-          </label>
-          <label>
-            Title
-            <input value={onboardingTitle} onChange={(event) => setOnboardingTitle(event.target.value)} disabled={disabled} />
-          </label>
-          <label style={{ gridColumn: '1 / -1' }}>
-            Description
-            <textarea
-              rows={3}
-              value={onboardingDescription}
-              onChange={(event) => setOnboardingDescription(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <label style={{ gridColumn: '1 / -1' }}>
-            Required acknowledgements (one per line)
-            <textarea
-              rows={4}
-              value={acknowledgements}
-              onChange={(event) => setAcknowledgements(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <label>
-            Onboarding email subject
-            <input
-              value={onboardingEmailSubject}
-              onChange={(event) => setOnboardingEmailSubject(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <label>
-            Onboarding email body
-            <textarea
-              rows={4}
-              value={onboardingEmailBody}
-              onChange={(event) => setOnboardingEmailBody(event.target.value)}
-              disabled={disabled}
-            />
-          </label>
         </article>
 
         <article className="weta-admin-card">

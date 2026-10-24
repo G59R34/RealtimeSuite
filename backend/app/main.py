@@ -14,12 +14,14 @@ from sqlalchemy.exc import DBAPIError
 
 from .config import settings
 from .db import apply_additions, apply_schema, ensure_seed, session_scope
+from .github_sync import sync_pull_requests
 from .routers import (
     auth,
     board_notes,
     comms,
     discipline,
     employees,
+    integrations,
     opsboard,
     reports,
     staff_requests,
@@ -69,6 +71,21 @@ def _scheduler_loop() -> None:
             logger.exception("scheduler tick failed")
 
 
+def _github_loop() -> None:
+    """Mirror configured GitHub pull requests into tasks on a fixed interval."""
+    interval = max(60, settings.github_poll_minutes * 60)
+    while not _stop.is_set():
+        if settings.github_enabled:
+            try:
+                result = sync_pull_requests()
+                for error in result.get("errors", []):
+                    logger.warning("GitHub sync: %s", error)
+            except Exception:  # noqa: BLE001 - keep the poller alive
+                logger.exception("GitHub pull request sync failed")
+        if _stop.wait(interval):
+            break
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     apply_schema()
@@ -77,6 +94,9 @@ async def lifespan(_: FastAPI):
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     thread = threading.Thread(target=_scheduler_loop, name="suite-scheduler", daemon=True)
     thread.start()
+    if settings.github_enabled:
+        github_thread = threading.Thread(target=_github_loop, name="github-sync", daemon=True)
+        github_thread.start()
     yield
     _stop.set()
 
@@ -114,6 +134,7 @@ for router in (
     comms.router,
     training.router,
     discipline.router,
+    integrations.router,
     reports.router,
     opsboard.router,
     board_notes.router,

@@ -292,7 +292,7 @@
             <div class="grid two">
               <label class="field">
                 <span>Port</span>
-                <input id="set-port" type="number" min="1024" max="65535" />
+                <input id="set-port" type="number" min="1" max="65535" />
               </label>
               <label class="field">
                 <span>Bind host</span>
@@ -306,7 +306,8 @@
               <span>Organization name</span>
               <input id="set-org" type="text" value="RealtimeSuite" />
             </label>
-            <p class="hint">Changing the port requires a server restart.</p>
+            <p class="hint">Renaming applies when you press <strong>Save Server Config</strong> — the existing organization is updated in the database right away, with no server restart.</p>
+            <p class="hint">Changing the port requires a server restart. Ports below 1024 are privileged on macOS and Linux. To serve the app over the internet, forward this port on your router and allow it through the firewall.</p>
           </article>
 
           <article class="card">
@@ -323,6 +324,24 @@
               <input id="set-board-token" type="text" spellcheck="false" placeholder="Leave blank for open kiosk access" />
             </label>
             <p class="hint">The board token is added to the kiosk URL as <code>?token=...</code>.</p>
+          </article>
+
+          <article class="card">
+            <h2>GitHub pull requests</h2>
+            <p class="hint">Optional. When a repository is listed and a token is saved, every open pull request becomes an unassigned task on the operations board, and the task closes when the pull request is merged or closed.</p>
+            <label class="field">
+              <span>Repositories <span class="muted">(owner/repo, comma separated)</span></span>
+              <input id="set-github-repos" type="text" spellcheck="false" placeholder="acme/storefront, acme/api" />
+            </label>
+            <label class="field">
+              <span>Personal access token</span>
+              <input id="set-github-token" type="password" spellcheck="false" placeholder="Leave blank to keep the saved token" />
+            </label>
+            <label class="field">
+              <span>Sync every (minutes)</span>
+              <input id="set-github-poll" type="number" min="1" max="1440" value="5" />
+            </label>
+            <p class="hint">Use a read-only token with access to the listed repositories. Clear the repository list to turn the sync off.</p>
           </article>
 
           <article class="card">

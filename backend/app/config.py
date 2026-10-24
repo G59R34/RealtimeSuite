@@ -37,6 +37,15 @@ class Settings:
         self.bootstrap_admin_name = os.getenv("BOOTSTRAP_ADMIN_NAME", "Administrator").strip()
         self.organization_name = os.getenv("ORGANIZATION_NAME", "RealtimeSuite").strip()
         self.opsboard_token = os.getenv("OPSBOARD_TOKEN", "").strip()
+        self.github_token = os.getenv("GITHUB_TOKEN", "").strip()
+        self.github_repos = [
+            item.strip()
+            for item in os.getenv("GITHUB_REPOS", "").replace(";", ",").replace("\n", ",").split(",")
+            if item.strip()
+        ]
+        self.github_poll_minutes = max(1, int(os.getenv("GITHUB_POLL_MINUTES", "5") or 5))
+        self.github_task_minutes = max(15, int(os.getenv("GITHUB_TASK_MINUTES", "60") or 60))
+        self.github_api_url = os.getenv("GITHUB_API_URL", "https://api.github.com").strip().rstrip("/")
         self.upload_dir = Path(os.getenv("UPLOAD_DIR", str(BACKEND_DIR / "uploads")))
         self.smtp_host = os.getenv("SMTP_HOST", "").strip()
         self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
@@ -48,6 +57,10 @@ class Settings:
         self.frontend_dist = Path(
             os.getenv("FRONTEND_DIST", str(BACKEND_DIR.parent / "frontend" / "dist"))
         )
+
+    @property
+    def github_enabled(self) -> bool:
+        return bool(self.github_token and self.github_repos)
 
 
 settings = Settings()

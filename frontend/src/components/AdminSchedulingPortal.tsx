@@ -40,8 +40,6 @@ type AdminSchedulingPortalProps = {
   shiftIntelligence: ShiftIntelligenceSnapshot | null;
   disciplineActions: DisciplineActionRow[];
   organizationName: string;
-  onboardingEmailSubjectTemplate: string;
-  onboardingEmailBodyTemplate: string;
   selectedDate: string;
   actorId: string;
   defaultShiftBreakMinutes: number;
@@ -206,7 +204,7 @@ type CalendarCell = {
 };
 
 type ScheduleCode = ExceptionCode | 'ATO';
-type SchedulingSubpage = 'schedule' | 'operations' | 'requests' | 'payroll' | 'onboarding';
+type SchedulingSubpage = 'schedule' | 'operations' | 'requests' | 'payroll' | 'hiring';
 type ShiftTemplateInput = {
   id: string;
   startTime: string;
@@ -388,8 +386,6 @@ export function AdminSchedulingPortal({
   shiftIntelligence,
   disciplineActions,
   organizationName,
-  onboardingEmailSubjectTemplate,
-  onboardingEmailBodyTemplate,
   selectedDate,
   actorId,
   defaultShiftBreakMinutes,
@@ -502,13 +498,13 @@ export function AdminSchedulingPortal({
     enabledFeatures.overtime !== false ||
     enabledFeatures.shift_swaps !== false;
   const showPayrollPage = enabledFeatures.payroll !== false;
-  const showOnboardingPage = enabledFeatures.onboarding !== false;
+  const showHiringPage = true;
   const availableSubpages: SchedulingSubpage[] = [
     ...(showSchedulePage ? ['schedule' as const] : []),
     ...(showOperationsPage ? ['operations' as const] : []),
     ...(showRequestsPage ? ['requests' as const] : []),
     ...(showPayrollPage ? ['payroll' as const] : []),
-    ...(showOnboardingPage ? ['onboarding' as const] : [])
+    ...(showHiringPage ? ['hiring' as const] : [])
   ];
   const [activeSubpage, setActiveSubpage] = useState<SchedulingSubpage>(availableSubpages[0] ?? 'schedule');
 
@@ -517,7 +513,7 @@ export function AdminSchedulingPortal({
       setActiveSubpage(availableSubpages[0] ?? 'operations');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubpage, showSchedulePage, showOperationsPage, showRequestsPage, showPayrollPage, showOnboardingPage]);
+  }, [activeSubpage, showSchedulePage, showOperationsPage, showRequestsPage, showPayrollPage, showHiringPage]);
   const [onboardingFullName, setOnboardingFullName] = useState('');
   const [onboardingEmail, setOnboardingEmail] = useState('');
   const [onboardingTempPassword, setOnboardingTempPassword] = useState('');
@@ -1405,15 +1401,13 @@ export function AdminSchedulingPortal({
         employeeName: fullName,
         temporaryPassword: tempPassword,
         organizationName,
-        subjectTemplate: onboardingEmailSubjectTemplate,
-        bodyTemplate: onboardingEmailBodyTemplate,
         loginUrl: window.location.origin
       });
 
       setMessage(
         result?.requiresEmailConfirmation
-          ? `Account created and onboarding email sent to ${email}. Employee must confirm email before first sign-in.`
-          : `Account created and onboarding email sent to ${email}.`
+          ? `Account created and login email sent to ${email}. Employee must confirm email before first sign-in.`
+          : `Account created and login email sent to ${email}.`
       );
       setOnboardingFullName('');
       setOnboardingEmail('');
@@ -1465,13 +1459,13 @@ export function AdminSchedulingPortal({
             Payroll
           </button>
         ) : null}
-        {showOnboardingPage ? (
+        {showHiringPage ? (
           <button
             type="button"
-            className={activeSubpage === 'onboarding' ? 'active' : ''}
-            onClick={() => setActiveSubpage('onboarding')}
+            className={activeSubpage === 'hiring' ? 'active' : ''}
+            onClick={() => setActiveSubpage('hiring')}
           >
-            Onboarding
+            Hiring
           </button>
         ) : null}
         </header>
@@ -1958,9 +1952,9 @@ export function AdminSchedulingPortal({
       </article>
       ) : null}
 
-      {activeSubpage === 'onboarding' ? (
+      {activeSubpage === 'hiring' ? (
       <article className="scheduling-admin-card schedule-card">
-        <h2>Employee Onboarding Account Provisioning</h2>
+        <h2>Employee Account Provisioning</h2>
         <form className="scheduling-admin-form" onSubmit={submitOnboardingAccount}>
           <label>
             Full Name
@@ -2005,7 +1999,7 @@ export function AdminSchedulingPortal({
         </form>
 
         <p className="empty-state">
-          Flow: create account here, send employee their login email + temporary password, and have them complete first-login onboarding.
+          Flow: create the account here and send the employee their login email + temporary password. They can sign in right away.
         </p>
       </article>
       ) : null}

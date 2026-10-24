@@ -216,19 +216,51 @@ function renderChecklist() {
   $('setup-db-badge').textContent = dbConfigured ? 'Configured' : 'Pending';
   $('setup-db-badge').className = `step-badge ${dbConfigured ? 'ok' : ''}`;
 
-  if (!$('setup-db-url').matches(':focus')) {
+  if (shouldSyncField('set-db-url')) {
     $('setup-db-url').value = check.config.databaseUrl;
   }
   if (!$('admin-email').value) $('admin-email').value = check.config.adminEmail;
+}
+
+// Fields the user has typed into but not saved yet. Painters must never overwrite
+// those, or an in-progress edit silently snaps back to the saved value.
+const dirtyFields = new Set();
+const UNSAVED_FIELD_IDS = [
+  'set-port', 'set-host', 'set-org', 'set-jwt', 'set-board-token',
+  'set-github-repos', 'set-github-poll', 'set-github-token', 'set-db-url'
+];
+
+function trackUnsavedEdits() {
+  for (const id of UNSAVED_FIELD_IDS) {
+    const node = $(id);
+    if (!node) continue;
+    const mark = () => dirtyFields.add(id);
+    node.addEventListener('input', mark);
+    node.addEventListener('change', mark);
+  }
+}
+
+function releaseUnsavedEdits(ids) {
+  for (const id of ids) dirtyFields.delete(id);
+}
+
+function shouldSyncField(id) {
+  const node = $(id);
+  return Boolean(node) && !dirtyFields.has(id) && !node.matches(':focus');
 }
 
 function renderSettings() {
   if (!state.settings || !state.check) return;
   const settings = state.settings;
   const config = state.check.config;
-  if (!$('set-port').matches(':focus')) $('set-port').value = config.port;
-  $('set-host').value = config.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0';
-  if (!$('set-org').matches(':focus')) $('set-org').value = config.organizationName;
+  if (shouldSyncField('set-port')) $('set-port').value = config.port;
+  if (shouldSyncField('set-host')) $('set-host').value = config.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0';
+  if (shouldSyncField('set-org')) $('set-org').value = config.organizationName;
+  if (shouldSyncField('set-github-repos')) $('set-github-repos').value = config.githubRepos || '';
+  if (shouldSyncField('set-github-poll')) $('set-github-poll').value = config.githubPollMinutes || 5;
+  $('set-github-token').placeholder = config.githubTokenSet
+    ? 'Token saved — leave blank to keep it'
+    : 'Paste a personal access token';
   $('set-autostart').checked = Boolean(settings.autoStart);
   $('set-autorestart').checked = Boolean(settings.autoRestart);
   $('set-openonstart').checked = Boolean(settings.openOnStart);
@@ -553,6 +585,7 @@ $('btn-save-db').addEventListener('click', () => withBusy($('btn-save-db'), 'Sav
   const value = $('setup-db-url').value.trim();
   if (!value) throw new Error('Enter a DATABASE_URL first.');
   await api.saveEnv({ DATABASE_URL: value });
+  releaseUnsavedEdits(['set-db-url']);
   await refresh();
   banner('Database URL saved. Run Initialize Schema when Postgres is ready.', 'ok');
 }));
@@ -594,7 +627,10 @@ $('btn-generate-jwt').addEventListener('click', () => {
 
 $('btn-save-settings').addEventListener('click', () => withBusy($('btn-save-settings'), 'Saving...', async () => {
   const port = Number($('set-port').value);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be between 1024 and 65535.');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be between 1 and 65535.');
+  if (port < 1024 && !portAllowedBelow1024()) {
+    throw new Error(`Port ${port} is privileged on this system. Use a port above 1024 or start the manager with administrator rights.`);
+  }
   await api.saveSettings({
     port,
     host: $('set-host').value,
@@ -602,9 +638,34 @@ $('btn-save-settings').addEventListener('click', () => withBusy($('btn-save-sett
     autoRestart: $('set-autorestart').checked,
     openOnStart: $('set-openonstart').checked
   });
+  // The organization name sits in this card too, so honour a pending rename here.
+  let orgNameNote = '';
+  if (dirtyFields.has('set-org')) {
+    const name = $('set-org').value.trim() || 'RealtimeSuite';
+    await api.saveEnv({ ORGANIZATION_NAME: name });
+    orgNameNote = await applyOrganizationToDatabase(name);
+    releaseUnsavedEdits(['set-org']);
+  }
+  releaseUnsavedEdits(['set-port', 'set-host']);
   await refresh();
-  banner('Manager settings saved.', 'ok');
+  banner(`Manager settings saved.${orgNameNote}`, orgNameNote ? 'warn' : 'ok');
 }));
+
+function portAllowedBelow1024() {
+  // Windows does not reserve the low ports for administrators; macOS and Linux do.
+  return Boolean(state.check && state.check.lowPortsAllowed);
+}
+
+async function applyOrganizationToDatabase(name) {
+  try {
+    const result = await api.setOrganizationName(name);
+    return result && result.ok === false
+      ? ` Organization name was saved but not applied to the database: ${result.error}`
+      : '';
+  } catch (error) {
+    return ' Organization name is saved to .env and will apply once the database is initialized.';
+  }
+}
 
 $('btn-save-env').addEventListener('click', () => withBusy($('btn-save-env'), 'Saving...', async () => {
   const updates = {
@@ -615,9 +676,25 @@ $('btn-save-env').addEventListener('click', () => withBusy($('btn-save-env'), 'S
   const jwt = $('set-jwt').value.trim();
   if (jwt) updates.JWT_SECRET = jwt;
   updates.OPSBOARD_TOKEN = $('set-board-token').value.trim();
+  const githubPoll = Number($('set-github-poll').value);
+  if (!Number.isInteger(githubPoll) || githubPoll < 1 || githubPoll > 1440) {
+    throw new Error('GitHub sync interval must be between 1 and 1440 minutes.');
+  }
+  updates.GITHUB_REPOS = $('set-github-repos').value.trim();
+  updates.GITHUB_POLL_MINUTES = String(githubPoll);
+  const githubToken = $('set-github-token').value.trim();
+  if (githubToken) updates.GITHUB_TOKEN = githubToken;
   await api.saveEnv(updates);
+  releaseUnsavedEdits([
+    'set-port', 'set-host', 'set-org', 'set-jwt', 'set-board-token',
+    'set-github-repos', 'set-github-poll', 'set-github-token'
+  ]);
+  const orgNameNote = await applyOrganizationToDatabase(updates.ORGANIZATION_NAME);
   await refresh();
-  banner('Server configuration saved. Restart the server to apply port or binding changes.', 'ok');
+  banner(
+    `Server configuration saved. Restart the server to apply the GitHub sync settings.${orgNameNote}`,
+    orgNameNote ? 'warn' : 'ok'
+  );
 }));
 
 $('btn-refresh-users').addEventListener('click', () => withBusy($('btn-refresh-users'), 'Loading...', loadUsers));
@@ -687,4 +764,5 @@ window.setInterval(() => {
   if (state.status) $('fact-uptime').textContent = formatUptime(state.status.startedAt);
 }, 1000);
 
+trackUnsavedEdits();
 refresh().catch((error) => banner(error.message || String(error)));

@@ -4674,6 +4674,165 @@ th {
   gap: 12px;
 }
 
+/* Today at a glance: the summary that leads the employee home page. */
+.employee-glance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.5fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #c4d2ea;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px 14px;
+}
+
+.employee-glance-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.employee-glance-eyebrow {
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #4d6489;
+  font-weight: 800;
+}
+
+.employee-glance-block > strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #123f84;
+  font-size: 0.98rem;
+}
+
+.employee-glance-block small {
+  color: #4d6489;
+  font-size: 0.76rem;
+}
+
+.employee-glance-stats {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.employee-glance-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.employee-glance-stat strong {
+  color: #143f88;
+  font-size: 1.1rem;
+  line-height: 1.1;
+}
+
+.employee-glance-stat span {
+  font-size: 0.7rem;
+  color: #4d6489;
+}
+
+.employee-glance-punch {
+  align-self: center;
+  border: 0;
+  border-radius: 6px;
+  background: #1850b7;
+  color: #fff;
+  font-weight: 800;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.employee-glance-punch:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.employee-home-grid {
+  align-items: start;
+}
+
+.employee-home-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.employee-inbox-section + .employee-inbox-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e9f6;
+}
+
+.employee-inbox-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.86rem;
+  color: #143f88;
+}
+
+.employee-inline-details {
+  margin-top: 10px;
+  border: 1px solid #dbe5f4;
+  border-radius: 8px;
+  background: #f7faff;
+  padding: 8px 10px;
+}
+
+.employee-inline-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #1f468a;
+}
+
+.employee-inline-details[open] summary {
+  margin-bottom: 8px;
+}
+
+.employee-request-section {
+  border: 1px solid #c4d2ea;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.employee-request-section > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 800;
+  color: #143f88;
+}
+
+.employee-request-section[open] > summary {
+  border-bottom: 1px solid #e1e9f6;
+}
+
+.employee-request-section > article.employee-card {
+  border: 0;
+  border-radius: 0 0 10px 10px;
+}
+
+.employee-empty-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px dashed #c4d2ea;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #4d6489;
+}
+
+.employee-empty-panel strong {
+  color: #123f84;
+}
+
 .employee-tabbar {
   display: flex;
   gap: 8px;
@@ -5987,6 +6146,19 @@ th {
 
   .employee-support-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .employee-glance {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .employee-glance-stats {
+    gap: 14px;
+  }
+
+  .employee-glance-punch {
+    justify-self: start;
   }
 
   .employee-portal-header {
@@ -9691,4 +9863,446 @@ textarea {
 .rs-note-strip-delete:disabled {
   color: #9aabc6;
   cursor: default;
+}
+
+/* ---------------------------------------------------------------- employee portal navigation
+   Desktop keeps the horizontal tab strip; phones and tablets get a slide-in sidebar so the
+   content never has to share the narrow viewport with two rows of menu buttons. */
+.employee-nav {
+  display: contents;
+}
+
+.employee-nav-head,
+.employee-nav-toggle,
+.employee-nav-backdrop {
+  display: none;
+}
+
+.employee-portal-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.employee-portal-identity > div {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .employee-portal-shell {
+    padding: 14px 12px calc(32px + env(safe-area-inset-bottom));
+    gap: 12px;
+  }
+
+  .employee-portal-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .employee-portal-identity > div {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .employee-portal-header h1 {
+    font-size: 1.1rem;
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .employee-portal-header p {
+    font-size: 0.84rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .employee-nav-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    order: 2;
+    margin-left: auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 8px 13px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #f4f8ff;
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+  }
+
+  .employee-nav-toggle-bars {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .employee-nav-toggle-bars span {
+    display: block;
+    width: 16px;
+    height: 2px;
+    border-radius: 2px;
+    background: #fff;
+  }
+
+  .employee-portal-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .employee-portal-controls label {
+    grid-column: 1 / -1;
+  }
+
+  .employee-portal-controls input,
+  .employee-portal-controls button {
+    width: 100%;
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  .employee-nav {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    width: min(86vw, 320px);
+    padding: calc(18px + env(safe-area-inset-top)) 16px calc(26px + env(safe-area-inset-bottom));
+    background: linear-gradient(160deg, #0a2546, #0f3a72 58%, #155091);
+    border-right: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 24px 48px rgba(3, 14, 32, 0.45);
+    overflow-y: auto;
+    visibility: hidden;
+    transform: translateX(-104%);
+    transition: transform 220ms ease, visibility 220ms ease;
+    z-index: 80;
+  }
+
+  .employee-nav.open {
+    visibility: visible;
+    transform: translateX(0);
+  }
+
+  .employee-nav-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .employee-nav-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .employee-nav-head strong {
+    color: #fff;
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .employee-nav-head span {
+    color: #bcd3f3;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .employee-nav-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  .employee-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    background: rgba(4, 13, 28, 0.55);
+    cursor: pointer;
+    z-index: 75;
+  }
+
+  .employee-nav .employee-tabbar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .employee-nav .employee-tabbar button {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 13px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.07);
+    color: #e6f0ff;
+    font-size: 0.92rem;
+  }
+
+  .employee-nav .employee-tabbar button.active {
+    background: linear-gradient(180deg, #3a74cf, #2359b3);
+    border-color: #4a83d8;
+    color: #fff;
+  }
+
+  .employee-nav .employee-submenu {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+  .employee-nav .employee-submenu:empty {
+    display: none;
+  }
+
+  .employee-nav .employee-submenu button {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #d9e7ff;
+    font-size: 0.86rem;
+    text-align: left;
+  }
+
+  .employee-nav .employee-submenu button.active {
+    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+  }
+
+  .employee-glance {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .employee-glance-shift {
+    grid-column: 1 / -1;
+  }
+
+  .employee-glance-block {
+    align-items: flex-start;
+  }
+
+  .employee-glance-block > .employee-badge,
+  .employee-glance-block > .code-pill {
+    align-self: flex-start;
+    width: fit-content;
+  }
+
+  .employee-glance-stats {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #dbe7f7;
+    border-radius: 10px;
+    background: #f3f8ff;
+  }
+
+  .employee-glance-punch {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 46px;
+    font-size: 0.95rem;
+  }
+
+  .employee-home-grid {
+    gap: 12px;
+  }
+
+  .employee-card {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .employee-card h2 {
+    font-size: 0.98rem;
+  }
+
+  .employee-card h3 {
+    font-size: 0.9rem;
+  }
+
+  .employee-card li {
+    padding: 12px;
+  }
+
+  .employee-card label {
+    gap: 6px;
+    font-size: 0.8rem;
+  }
+
+  .employee-card label + label {
+    margin-top: 6px;
+  }
+
+  .employee-card input:not([type="checkbox"]),
+  .employee-card select,
+  .employee-card textarea {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 0.92rem;
+  }
+
+  .employee-card input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .employee-pref-checkbox {
+    min-height: 44px;
+    justify-content: flex-start;
+  }
+
+  .employee-portal-shell li,
+  .employee-portal-shell p,
+  .employee-portal-shell span {
+    overflow-wrap: anywhere;
+  }
+
+  .employee-section-head,
+  .employee-row-head,
+  .employee-meta-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .employee-task-ack-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .employee-task-ack-row input {
+    flex: 1 1 100%;
+    min-height: 42px;
+  }
+
+  .employee-task-ack-row button {
+    flex: 1 1 auto;
+    min-height: 42px;
+  }
+
+  .employee-inline-details {
+    padding: 10px;
+  }
+
+  .employee-request-section summary {
+    padding: 12px 14px;
+    font-size: 0.9rem;
+  }
+
+  .employee-request-form {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .employee-request-form input,
+  .employee-request-form select,
+  .employee-request-form textarea {
+    width: 100%;
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  .employee-request-form button {
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  .employee-portal-shell .schedule-calendar {
+    grid-template-columns: repeat(7, minmax(64px, 1fr));
+    gap: 5px;
+    padding-bottom: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .employee-portal-shell .schedule-calendar > * {
+    scroll-snap-align: start;
+  }
+
+  .employee-portal-shell .schedule-calendar .calendar-cell {
+    min-height: 86px;
+  }
+
+  .employee-portal-shell .schedule-calendar .calendar-weekday {
+    font-size: 0.62rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .employee-glance {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .employee-glance-shift,
+  .employee-glance-stats {
+    grid-column: 1 / -1;
+  }
+
+  .employee-portal-identity {
+    gap: 10px;
+  }
+
+  .employee-portal-controls {
+    gap: 7px;
+  }
+
+  .employee-portal-controls button {
+    padding-inline: 6px;
+    font-size: 0.86rem;
+  }
+
+  .employee-nav {
+    width: min(92vw, 320px);
+  }
 }

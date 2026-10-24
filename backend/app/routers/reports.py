@@ -24,7 +24,7 @@ SHIFT_COLUMNS = """
 
 TASK_COLUMNS = """
   t.id, t.title, t.description, t.status::text as status, t.priority::text as priority,
-  t.source_system, t.start_at, t.end_at, t.work_area_id, t.shift_id,
+  t.source_system, t.external_id, t.external_url, t.start_at, t.end_at, t.work_area_id, t.shift_id,
   t.created_by, t.updated_by, t.created_at, t.updated_at
 """
 
