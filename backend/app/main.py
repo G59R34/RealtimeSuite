@@ -13,9 +13,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from .config import settings
-from .db import apply_schema, ensure_seed, session_scope
+from .db import apply_additions, apply_schema, ensure_seed, session_scope
 from .routers import (
     auth,
+    board_notes,
     comms,
     discipline,
     employees,
@@ -71,6 +72,7 @@ def _scheduler_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     apply_schema()
+    apply_additions()
     ensure_seed()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     thread = threading.Thread(target=_scheduler_loop, name="suite-scheduler", daemon=True)
@@ -114,6 +116,7 @@ for router in (
     discipline.router,
     reports.router,
     opsboard.router,
+    board_notes.router,
 ):
     app.include_router(router)
 

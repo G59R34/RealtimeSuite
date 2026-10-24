@@ -514,9 +514,26 @@ export type DisciplineActionRow = {
   punishment_type: DisciplinePunishmentType;
   punishment_value: number;
   status: DisciplineStatus;
+  leave_starts_on: string | null;
+  leave_ends_on: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   review_notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BoardNoteRow = {
+  id: string;
+  note_date: string;
+  body: string;
+  is_public: boolean;
+  created_by: string | null;
+  author_name: string | null;
+  employee_id: string | null;
+  employee_name: string | null;
+  work_area_id: string | null;
+  work_area_name: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -536,6 +553,7 @@ export type AdminDashboardData = {
   shiftSwapRequests: ShiftSwapRequestRow[];
   shiftIntelligence: ShiftIntelligenceSnapshot | null;
   disciplineActions: DisciplineActionRow[];
+  boardNotes: BoardNoteRow[];
 };
 
 export type EmployeePortalData = {

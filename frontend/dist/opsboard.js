@@ -33,6 +33,9 @@
     nowCount: document.getElementById('ob-now-count'),
     upcomingCount: document.getElementById('ob-upcoming-count'),
     unassignedCount: document.getElementById('ob-unassigned-count'),
+    notes: document.getElementById('ob-notes'),
+    notesList: document.getElementById('ob-notes-list'),
+    notesCount: document.getElementById('ob-notes-count'),
     footerBrand: document.getElementById('ob-footer-brand'),
     footerUpdated: document.getElementById('ob-footer-updated'),
     kpi: {
@@ -313,6 +316,32 @@
     }
   }
 
+  function renderNotes(notes) {
+    var items = Array.isArray(notes) ? notes : [];
+    if (!el.notes || !el.notesList) return;
+    el.notes.hidden = items.length === 0;
+    if (items.length === 0) return;
+    el.notesCount.textContent = String(items.length);
+    el.notesList.innerHTML = '';
+    for (var i = 0; i < items.length; i += 1) {
+      var note = items[i] || {};
+      var li = document.createElement('li');
+      li.className = 'ob-note';
+      var body = document.createElement('p');
+      body.className = 'ob-note-body';
+      body.textContent = String(note.body || '');
+      var meta = document.createElement('span');
+      meta.className = 'ob-note-meta';
+      var author = note.author_name ? String(note.author_name) : 'Manager';
+      meta.textContent = note.created_at ? author + ' · ' + clockTime(note.created_at) : author;
+      var target = note.employee_name ? String(note.employee_name) : (note.work_area_name ? String(note.work_area_name) : '');
+      if (target) meta.textContent += ' · About ' + target;
+      li.appendChild(body);
+      li.appendChild(meta);
+      el.notesList.appendChild(li);
+    }
+  }
+
   function render(data) {
     var view = buildViewModel(data);
     el.title.textContent = state.settings.brandingTitle;
@@ -344,6 +373,7 @@
     renderList(el.current, view.current, 'Nothing scheduled right now.', 14);
     renderList(el.upcoming, view.upcoming, 'No upcoming work in this horizon.', 18);
     renderList(el.unassigned, view.unassigned, 'All tasks are assigned.', 20);
+    renderNotes(data.board_notes);
 
     alertCritical(view.criticalIds);
   }

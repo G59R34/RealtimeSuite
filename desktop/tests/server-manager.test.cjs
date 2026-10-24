@@ -88,6 +88,27 @@ test('status exposes local app and board URLs', async () => {
   assert.ok(status.lanUrls.some((url) => url.endsWith(':8111')));
 });
 
+test('setup waits for pip upgrade to succeed before installing dependencies', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const venvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-venv-'));
+  const pythonPath = process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts', 'python.exe')
+    : path.join(venvDir, 'bin', 'python');
+  fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
+  fs.writeFileSync(pythonPath, '');
+  const manager = new ServerManager({ backendDir, userDataDir, venvDir });
+  manager.detectPython = async () => ({ path: 'python', version: '3.12.0' });
+  const commands = [];
+  manager.run = async (_command, args) => {
+    commands.push(args);
+    return { code: args.includes('--upgrade') ? 1 : 0, output: 'pip failure' };
+  };
+
+  await assert.rejects(manager.setupEnvironment(), /upgrade pip/i);
+  assert.equal(commands.length, 1);
+});
+
 test('check reports backend, env and frontend readiness', async () => {
   const backendDir = tempBackend();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));

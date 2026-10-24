@@ -24,7 +24,7 @@ SHIFT_COLUMNS = """
   s.id, s.employee_id, s.work_area_id, s.start_at, s.end_at, s.status::text as status,
   s.clocked_in_at, s.clocked_out_at, s.clock_in_latitude, s.clock_in_longitude,
   s.clock_in_accuracy_meters, s.clock_in_device, s.clock_in_is_mobile,
-  s.is_unscheduled_overtime, s.pay_multiplier, s.worked_minutes, s.break_minutes,
+  s.is_unscheduled_overtime, s.pay_multiplier::float8 as pay_multiplier, s.worked_minutes, s.break_minutes,
   s.is_shift_pool, s.shift_pool_posted_at, s.shift_pool_posted_by,
   s.shift_pool_claimed_at, s.shift_pool_claimed_by, s.notes,
   s.created_by, s.updated_by, s.created_at, s.updated_at

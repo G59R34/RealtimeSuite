@@ -784,12 +784,38 @@ export async function deleteOrganizationClockInLocation(locationId: string) {
 // Aggregates
 // ---------------------------------------------------------------------------
 
+// `pay_multiplier` is a numeric column, but a numeric value can still arrive
+// serialized as text ("1.50"). Rendering code compares it with numbers and calls
+// toFixed, so coerce it once here instead of letting one row blank the screen.
+function normalizeShiftPay<T>(row: T): T {
+  const value = row as Record<string, unknown>;
+  if (value.pay_multiplier === undefined || typeof value.pay_multiplier === 'number') {
+    return row;
+  }
+  const multiplier = Number(value.pay_multiplier);
+  return {
+    ...value,
+    pay_multiplier: Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
+  } as T;
+}
+
 export async function fetchAdminDashboardData(selectedDate: string): Promise<AdminDashboardData> {
-  return apiFetch(`/dashboard?date=${encodeURIComponent(selectedDate)}`);
+  const data = await apiFetch<AdminDashboardData>(`/dashboard?date=${encodeURIComponent(selectedDate)}`);
+  return {
+    ...data,
+    shifts: (data.shifts ?? []).map(normalizeShiftPay),
+    monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay)
+  };
 }
 
 export async function fetchEmployeePortalData(userId: string, selectedDate: string): Promise<EmployeePortalData> {
-  return apiFetch(`/portal?date=${encodeURIComponent(selectedDate)}`);
+  const data = await apiFetch<EmployeePortalData>(`/portal?date=${encodeURIComponent(selectedDate)}`);
+  return {
+    ...data,
+    shifts: (data.shifts ?? []).map(normalizeShiftPay),
+    monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay),
+    shiftPoolShifts: (data.shiftPoolShifts ?? []).map(normalizeShiftPay)
+  };
 }
 
 export async function fetchTrainingCourses(): Promise<TrainingCourseRow[]> {
@@ -883,6 +909,29 @@ export async function upsertShift(payload: {
       is_unscheduled_overtime: Boolean(payload.isUnscheduledOvertime)
     })
   });
+}
+
+export async function createBoardNote(payload: {
+  body: string;
+  isPublic: boolean;
+  date: string;
+  employeeId?: string | null;
+  workAreaId?: string | null;
+}): Promise<{ id: string }> {
+  return apiFetch('/board-notes', {
+    method: 'POST',
+    body: jsonBody({
+      body: payload.body,
+      is_public: payload.isPublic,
+      date: payload.date,
+      employee_id: payload.employeeId ?? null,
+      work_area_id: payload.workAreaId ?? null
+    })
+  });
+}
+
+export async function deleteBoardNote(noteId: string) {
+  await apiFetch(`/board-notes/${encodeURIComponent(noteId)}`, { method: 'DELETE' });
 }
 
 export async function deleteShift(shiftId: string) {

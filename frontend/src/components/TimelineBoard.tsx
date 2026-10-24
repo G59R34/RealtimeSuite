@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type {
   BoardFilters,
+  BoardNoteRow,
+  DisciplineActionRow,
+  ExceptionRequestRow,
   ProfileRow,
   ShiftRow,
   ShiftStatus,
@@ -9,6 +12,7 @@ import type {
   TaskPriority,
   TaskRow,
   TaskStatus,
+  TimeOffRequestRow,
   WorkAreaRow
 } from '../types';
 import { minutesToHHMM, toTimeHHMM } from '../lib/time';
@@ -64,6 +68,18 @@ type TimelineBoardProps = {
   actorId: string;
   features?: FeatureFlags;
   busy: boolean;
+  boardNotes: BoardNoteRow[];
+  timeOffRequests: TimeOffRequestRow[];
+  exceptionRequests?: ExceptionRequestRow[];
+  disciplineActions?: DisciplineActionRow[];
+  onCreateBoardNote: (payload: {
+    body: string;
+    isPublic: boolean;
+    date: string;
+    employeeId?: string | null;
+    workAreaId?: string | null;
+  }) => Promise<unknown>;
+  onDeleteBoardNote: (noteId: string) => Promise<unknown>;
   onUpsertShift: (payload: ShiftPayload) => Promise<void>;
   onDeleteShift: (shiftId: string) => Promise<void>;
   onUpdateShiftWorkArea: (shiftId: string, workAreaId: string | null) => Promise<void>;
@@ -80,10 +96,55 @@ type TimelineBoardProps = {
   onSendNoteTask: (payload: { employeeId: string; note: string }) => Promise<void>;
 };
 
-const PX_PER_MINUTE: Record<2 | 4 | 8, number> = { 2: 2, 4: 1.1, 8: 0.58 };
-const ROW_HEIGHT = 46;
+const PX_PER_MINUTE: Record<2 | 4 | 8, number> = { 2: 2.2, 4: 1.2, 8: 0.62 };
+const ROW_HEIGHT = 50;
+const MIN_SHIFT_GAP_MINUTES = 10;
 const LEFT_WIDTH = 250;
 const WORK_AREA_COLORS = ['#1f56b9', '#0f8a63', '#b25b00', '#6a3fb5', '#b02033', '#0b7285', '#846200'];
+
+const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  pending: 'open',
+  in_progress: 'in progress',
+  done: 'complete',
+  cancelled: 'cancelled'
+};
+
+// A shift line turns into an alert state when the employee's clock-in is off or a
+// task on that shift was never acknowledged. One state is shown at a time, most
+// urgent first.
+type ShiftAlert = 'early' | 'late' | 'missing' | 'ack';
+
+const SHIFT_ALERT_LABEL: Record<ShiftAlert, string> = {
+  early: 'Early in',
+  late: 'Late in',
+  missing: 'No clock-in',
+  ack: 'No ack'
+};
+
+const SHIFT_ALERT_HINT: Record<ShiftAlert, string> = {
+  early: 'clocked in early',
+  late: 'clocked in late',
+  missing: 'has not clocked in',
+  ack: 'a task was not acknowledged within 2 minutes of its start'
+};
+
+const CLOCK_GRACE_MS = 60_000;
+const TASK_ACK_WINDOW_MS = 2 * 60_000;
+
+type MenuTarget = {
+  kind: 'task' | 'shift' | 'slot' | 'area' | 'board';
+  taskId?: string;
+  shiftId?: string;
+  employeeId?: string;
+  workAreaId?: string;
+  minutes?: number;
+};
+
+type MenuState = MenuTarget & { x: number; y: number };
+
+type MenuEntry =
+  | { kind: 'separator' }
+  | { kind: 'item'; label: string; detail?: string; danger?: boolean; disabled?: boolean; onSelect: () => void };
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -142,6 +203,45 @@ function priorityColor(priority: TaskPriority): string {
   return '#2b6cb0';
 }
 
+function timeOffTypeLabel(type: string): string {
+  const labels: Record<string, string> = {
+    vacation: 'Vacation',
+    sick: 'Sick',
+    personal: 'Personal',
+    unpaid: 'Unpaid',
+    other: 'Time off'
+  };
+  return labels[type] ?? 'Time off';
+}
+
+// Leave that takes an employee off the schedule for the day. Discipline wins over an
+// approved day off, which in turn wins over regular time off.
+type LeaveKind = 'suspension' | 'probation' | 'vaut' | 'day_off' | 'time_off';
+
+type LeaveMarker = {
+  kind: LeaveKind;
+  label: string;
+  detail: string;
+};
+
+const EXCEPTION_LEAVE_LABEL: Record<string, string> = {
+  VAUT: 'VAUT',
+  DO: 'Day off'
+};
+
+function addDays(dateValue: string, offset: number): string {
+  const day = dayStart(dateValue);
+  day.setDate(day.getDate() + offset);
+  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+}
+
+function coversDate(start: string | null | undefined, end: string | null | undefined, target: string): boolean {
+  const from = start?.slice(0, 10);
+  const to = end?.slice(0, 10) ?? from;
+  if (!from || !to) return false;
+  return target >= from && target <= to;
+}
+
 export function TimelineBoard({
   employees,
   workAreas,
@@ -156,6 +256,12 @@ export function TimelineBoard({
   actorId,
   features = DEFAULT_FEATURES,
   busy,
+  boardNotes,
+  timeOffRequests,
+  exceptionRequests = [],
+  disciplineActions = [],
+  onCreateBoardNote,
+  onDeleteBoardNote,
   onUpsertShift,
   onDeleteShift,
   onUpdateShiftWorkArea,
@@ -220,12 +326,109 @@ export function TimelineBoard({
   const [noteDraft, setNoteDraft] = useState<null | { employeeId: string; note: string }>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [formBusy, setFormBusy] = useState(false);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [noteBody, setNoteBody] = useState('');
+  const [notePublic, setNotePublic] = useState(false);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [noteTarget, setNoteTarget] = useState('');
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
+  const noteInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
 
-  const ppm = PX_PER_MINUTE[timelineWindowHours];
+  // The base value is the zoom level for the selected window. When the viewport is
+  // wider than the zoomed grid, stretch the scale so a full day always fills the
+  // board instead of leaving dead space to the right.
+  const basePpm = PX_PER_MINUTE[timelineWindowHours];
+  const fitPpm = viewportWidth > 0 ? Math.max(0, viewportWidth - LEFT_WIDTH - 2) / 1440 : 0;
+  const ppm = Math.max(basePpm, fitPpm);
   const gridWidth = Math.round(1440 * ppm);
-  const pxPerHour = Math.round(60 * ppm);
+  const hasViewportWidth = viewportWidth > 0;
 
   const workAreaById = useMemo(() => new Map(workAreas.map((area) => [area.id, area])), [workAreas]);
+
+  // Notes attached to a person or a work area are drawn on the board itself, in the
+  // row they belong to. Notes without a target stay in the Board Notes rail.
+  const notesByEmployee = useMemo(() => {
+    const map = new Map<string, BoardNoteRow[]>();
+    for (const note of boardNotes) {
+      if (!note.employee_id) continue;
+      const bucket = map.get(note.employee_id) ?? [];
+      bucket.push(note);
+      map.set(note.employee_id, bucket);
+    }
+    return map;
+  }, [boardNotes]);
+
+  // Leave is a whole-day marker on the board. Discipline (suspension or probation)
+  // outranks an approved VAUT/DO day, which outranks regular approved time off.
+  const leaveByEmployee = useMemo(() => {
+    const map = new Map<string, LeaveMarker>();
+    for (const action of disciplineActions) {
+      if (action.status === 'revoked') continue;
+      const suspended = action.punishment_type === 'unpaid_suspension';
+      const probation = action.punishment_type === 'probation';
+      if (!suspended && !probation) continue;
+      const days = Math.max(1, Math.floor(Number(action.punishment_value) || 0));
+      const start = action.leave_starts_on?.slice(0, 10) ?? action.created_at?.slice(0, 10) ?? null;
+      const end = action.leave_ends_on?.slice(0, 10) ?? (start ? addDays(start, days - 1) : null);
+      if (!coversDate(start, end, selectedDate)) continue;
+      if (map.has(action.employee_id)) continue;
+      map.set(
+        action.employee_id,
+        suspended
+          ? {
+              kind: 'suspension',
+              label: 'Suspension',
+              detail: `Suspension — ${days} day${days === 1 ? '' : 's'} off (${start} → ${end})`
+            }
+          : {
+              kind: 'probation',
+              label: 'Probation',
+              detail: `Probation — schedule cleared (${start} → ${end})`
+            }
+      );
+    }
+    for (const request of exceptionRequests) {
+      if (map.has(request.employee_id)) continue;
+      if (request.status !== 'approved') continue;
+      const label = EXCEPTION_LEAVE_LABEL[request.exception_code];
+      if (!label) continue;
+      if (!coversDate(request.start_date, request.end_date, selectedDate)) continue;
+      map.set(request.employee_id, {
+        kind: request.exception_code === 'VAUT' ? 'vaut' : 'day_off',
+        label,
+        detail:
+          request.exception_code === 'VAUT'
+            ? 'Authorized unpaid time off (VAUT)'
+            : 'Authorized day off (DO)'
+      });
+    }
+    for (const request of timeOffRequests) {
+      if (map.has(request.employee_id)) continue;
+      if (request.status !== 'approved') continue;
+      if (!coversDate(request.start_date, request.end_date, selectedDate)) continue;
+      map.set(request.employee_id, {
+        kind: 'time_off',
+        label: timeOffTypeLabel(request.request_type),
+        detail: `Approved ${request.request_type} time off (${request.start_date.slice(0, 10)} → ${request.end_date.slice(0, 10)})`
+      });
+    }
+    return map;
+  }, [timeOffRequests, exceptionRequests, disciplineActions, selectedDate]);
+
+  const notesByArea = useMemo(() => {
+    const map = new Map<string, BoardNoteRow[]>();
+    for (const note of boardNotes) {
+      if (!note.work_area_id) continue;
+      const bucket = map.get(note.work_area_id) ?? [];
+      bucket.push(note);
+      map.set(note.work_area_id, bucket);
+    }
+    return map;
+  }, [boardNotes]);
 
   const shiftsByEmployee = useMemo(() => {
     const map = new Map<string, ShiftRow[]>();
@@ -249,6 +452,53 @@ export function TimelineBoard({
   }, [taskAssignments]);
 
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+
+  function shiftGaps(list: ShiftRow[]) {
+    const ordered = [...list].sort(
+      (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
+    );
+    const gaps: { key: string; left: number; width: number; label: string }[] = [];
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1];
+      const current = ordered[index];
+      const from = clamp(minutesIntoDay(previous.end_at, selectedDate), 0, 1440);
+      const to = clamp(minutesIntoDay(current.start_at, selectedDate), 0, 1440);
+      const minutes = Math.round(to - from);
+      if (minutes < MIN_SHIFT_GAP_MINUTES) continue;
+      const hours = Math.floor(minutes / 60);
+      const rest = minutes % 60;
+      gaps.push({
+        key: `${previous.id}-${current.id}`,
+        left: from,
+        width: minutes,
+        label: `${hours ? `${hours}h ` : ''}${rest ? `${rest}m ` : ''}between shifts`
+      });
+    }
+    return gaps;
+  }
+
+  function shiftAlert(shift: ShiftRow, assignments: TaskAssignmentRow[]): ShiftAlert | null {
+    const now = nowDate.getTime();
+    const start = new Date(shift.start_at).getTime();
+    const clockedIn = shift.clocked_in_at ? new Date(shift.clocked_in_at).getTime() : null;
+    if (clockedIn === null) {
+      if (now > start + CLOCK_GRACE_MS) return 'missing';
+    } else if (clockedIn < start - CLOCK_GRACE_MS) {
+      return 'early';
+    } else if (clockedIn > start + CLOCK_GRACE_MS) {
+      return 'late';
+    }
+    const shiftEnd = new Date(shift.end_at).getTime();
+    for (const assignment of assignments) {
+      if (assignment.acknowledged_at) continue;
+      const task = taskById.get(assignment.task_id);
+      if (!task || task.status === 'done' || task.status === 'cancelled') continue;
+      const taskStart = new Date(task.start_at).getTime();
+      if (taskStart < start || taskStart > shiftEnd) continue;
+      if (now > taskStart + TASK_ACK_WINDOW_MS) return 'ack';
+    }
+    return null;
+  }
 
   const assignedTaskIds = useMemo(
     () => new Set(taskAssignments.map((assignment) => assignment.task_id)),
@@ -291,6 +541,43 @@ export function TimelineBoard({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  useEffect(() => {
+    if (!menu) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
+      setMenu(null);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMenu(null);
+    }
+    function handleDismiss() {
+      setMenu(null);
+    }
+    window.addEventListener('pointerdown', handlePointerDown, true);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleDismiss, true);
+    window.addEventListener('resize', handleDismiss);
+    window.addEventListener('blur', handleDismiss);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleDismiss, true);
+      window.removeEventListener('resize', handleDismiss);
+      window.removeEventListener('blur', handleDismiss);
+    };
+  }, [menu]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const node = menuRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const margin = 8;
+    const nextX = Math.min(menu.x, Math.max(margin, window.innerWidth - rect.width - margin));
+    const nextY = Math.min(menu.y, Math.max(margin, window.innerHeight - rect.height - margin));
+    if (nextX !== menu.x || nextY !== menu.y) setMenu({ ...menu, x: nextX, y: nextY });
+  }, [menu]);
+
   const visibleEmployees = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return employees;
@@ -325,10 +612,28 @@ export function TimelineBoard({
   useEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
+    const update = () => setViewportWidth(node.clientWidth);
+    update();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', update);
+      return () => window.removeEventListener('resize', update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
     const minutes = (Date.now() - dayStart(selectedDate).getTime()) / 60000;
-    const target = selectedDate === todayKey() ? minutes * PX_PER_MINUTE[timelineWindowHours] - node.clientWidth / 3 : 6 * Math.round(60 * PX_PER_MINUTE[timelineWindowHours]);
+    const target = selectedDate === todayKey()
+      ? minutes * ppm - node.clientWidth / 3
+      : 6 * Math.round(60 * ppm);
     node.scrollLeft = Math.max(0, target);
-  }, [timelineWindowHours, selectedDate]);
+    // Re-centre once the real board width is known; later resizes keep the user's scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineWindowHours, selectedDate, hasViewportWidth]);
 
   const presence = useMemo(() => {
     let onDuty = 0;
@@ -504,6 +809,369 @@ export function TimelineBoard({
     });
   }
 
+  function startNote(target: string) {
+    setNoteTarget(target);
+    setNoteError(null);
+    requestAnimationFrame(() => {
+      const node = noteInputRef.current;
+      if (!node) return;
+      node.scrollIntoView({ block: 'nearest' });
+      node.focus();
+    });
+  }
+
+  async function addBoardNote() {
+    const body = noteBody.trim();
+    if (!body || noteBusy) return;
+    setNoteBusy(true);
+    setNoteError(null);
+    const [targetKind, targetId] = noteTarget.split(':');
+    try {
+      await onCreateBoardNote({
+        body,
+        isPublic: notePublic,
+        date: selectedDate,
+        employeeId: targetKind === 'employee' ? targetId : null,
+        workAreaId: targetKind === 'area' ? targetId : null
+      });
+      setNoteBody('');
+      setNotePublic(false);
+      setNoteTarget('');
+    } catch (error) {
+      setNoteError(error instanceof Error ? error.message : 'Could not save the note.');
+    } finally {
+      setNoteBusy(false);
+    }
+  }
+
+  async function removeBoardNote(noteId: string) {
+    if (noteBusyId) return;
+    setNoteBusyId(noteId);
+    setNoteError(null);
+    try {
+      await onDeleteBoardNote(noteId);
+    } catch (error) {
+      setNoteError(error instanceof Error ? error.message : 'Could not delete the note.');
+    } finally {
+      setNoteBusyId(null);
+    }
+  }
+
+  function renderNoteStrips(notes: BoardNoteRow[], scope: 'employee' | 'area') {
+    if (!notes.length) return null;
+    return notes.map((note) => {
+      const expanded = expandedNoteId === note.id;
+      return (
+        <div key={note.id} className={`rs-note-strip ${scope}`}>
+          <div className="rs-note-strip-gutter" style={{ width: LEFT_WIDTH }}>
+            <span className="rs-note-strip-tag">{scope === 'area' ? 'Area note' : 'Note'}</span>
+          </div>
+          <div
+            className="rs-note-strip-track"
+            style={{ width: gridWidth, backgroundSize: `${gridWidth / 24}px 100%, 100% 100%` }}
+          >
+            <div className={`rs-note-strip-card ${note.is_public ? 'public' : 'private'}${expanded ? ' expanded' : ''}`}>
+              <button
+                type="button"
+                className="rs-note-strip-main"
+                title={expanded ? 'Collapse this note' : 'Show the whole note'}
+                onClick={() => setExpandedNoteId(expanded ? null : note.id)}
+              >
+                <span className={`rs-note-strip-vis ${note.is_public ? 'public' : 'private'}`}>
+                  {note.is_public ? 'Kiosk' : 'Only you'}
+                </span>
+                <span className="rs-note-strip-text">{note.body}</span>
+                <span className="rs-note-strip-meta">
+                  {note.author_name || 'Unknown'} · {toTimeHHMM(note.created_at)}
+                </span>
+              </button>
+              {note.created_by === actorId ? (
+                <button
+                  type="button"
+                  className="rs-note-strip-delete"
+                  title="Delete note"
+                  disabled={noteBusyId === note.id}
+                  onClick={() => void removeBoardNote(note.id)}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      );
+    });
+  }
+
+  function openMenu(event: MouseEvent<HTMLElement>, target: MenuTarget) {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu({ ...target, x: event.clientX, y: event.clientY });
+  }
+
+  function reportMenuError(error: unknown, fallback: string) {
+    setNotice({ text: error instanceof Error ? error.message : fallback, tone: 'warn' });
+  }
+
+  async function setTaskStatus(task: TaskRow, status: TaskStatus) {
+    try {
+      await onUpdateTask({
+        taskId: task.id,
+        title: task.title,
+        description: task.description ?? '',
+        startAt: task.start_at,
+        endAt: task.end_at,
+        workAreaId: task.work_area_id,
+        shiftId: task.shift_id,
+        priority: task.priority,
+        status
+      });
+      setNotice({ text: `“${task.title}” marked ${TASK_STATUS_LABEL[status]}.`, tone: 'ok' });
+    } catch (error) {
+      reportMenuError(error, 'Could not update that task.');
+    }
+  }
+
+  async function unassignTask(task: TaskRow) {
+    try {
+      await onUnassignTaskAssignment(task.id);
+      setNotice({ text: `“${task.title}” moved to unassigned tasks.`, tone: 'ok' });
+    } catch (error) {
+      reportMenuError(error, 'Could not unassign that task.');
+    }
+  }
+
+  async function removeTask(task: TaskRow) {
+    try {
+      await onDeleteTask(task.id);
+      setNotice({ text: `Deleted “${task.title}”.`, tone: 'ok' });
+    } catch (error) {
+      reportMenuError(error, 'Could not delete that task.');
+    }
+  }
+
+  async function toggleClock(shift: ShiftRow) {
+    try {
+      if (shift.clocked_in_at) {
+        await onClockOutShift(shift.id, actorId);
+        setNotice({ text: 'Shift clocked out.', tone: 'ok' });
+      } else {
+        await onClockInShift(shift.id, actorId);
+        setNotice({ text: 'Shift clocked in.', tone: 'ok' });
+      }
+    } catch (error) {
+      reportMenuError(error, 'Could not update the shift clock state.');
+    }
+  }
+
+  async function assignBreak(shift: ShiftRow) {
+    try {
+      await onAssignBreak(shift.id, shift.break_minutes, shift.notes ?? '');
+      setNotice({ text: `Break task assigned (${shift.break_minutes} min).`, tone: 'ok' });
+    } catch (error) {
+      reportMenuError(error, 'Could not assign the break task.');
+    }
+  }
+
+  async function removeShift(shift: ShiftRow) {
+    try {
+      await onDeleteShift(shift.id);
+      setNotice({ text: 'Shift deleted.', tone: 'ok' });
+    } catch (error) {
+      reportMenuError(error, 'Could not delete that shift.');
+    }
+  }
+
+  function buildMenu(): { title: string; subtitle?: string; items: MenuEntry[] } | null {
+    if (!menu) return null;
+
+    if (menu.kind === 'task') {
+      const task = menu.taskId ? taskById.get(menu.taskId) : undefined;
+      if (!task) return null;
+      const assignment = taskAssignments.find((item) => item.task_id === task.id);
+      const assignee = assignment ? employees.find((employee) => employee.id === assignment.employee_id) : undefined;
+      const employeeId = menu.employeeId ?? assignment?.employee_id ?? '';
+      const items: MenuEntry[] = [
+        { kind: 'item', label: 'Edit task…', onSelect: () => openTask(task.id, employeeId) },
+        { kind: 'separator' },
+        {
+          kind: 'item',
+          label: 'Mark in progress',
+          disabled: task.status === 'in_progress',
+          onSelect: () => void setTaskStatus(task, 'in_progress')
+        },
+        {
+          kind: 'item',
+          label: 'Mark complete',
+          disabled: task.status === 'done',
+          onSelect: () => void setTaskStatus(task, 'done')
+        },
+        {
+          kind: 'item',
+          label: 'Reopen task',
+          disabled: task.status === 'pending',
+          onSelect: () => void setTaskStatus(task, 'pending')
+        },
+        {
+          kind: 'item',
+          label: 'Cancel task',
+          disabled: task.status === 'cancelled',
+          onSelect: () => void setTaskStatus(task, 'cancelled')
+        }
+      ];
+      if (assignment) {
+        items.push(
+          { kind: 'separator' },
+          {
+            kind: 'item',
+            label: assignee ? `Unassign from ${assignee.full_name || assignee.email}` : 'Unassign task',
+            onSelect: () => void unassignTask(task)
+          }
+        );
+      }
+      items.push({ kind: 'separator' }, { kind: 'item', label: 'Delete task', danger: true, onSelect: () => void removeTask(task) });
+      return {
+        title: task.title,
+        subtitle: [task.priority, TASK_STATUS_LABEL[task.status], assignee ? assignee.full_name || assignee.email : 'Unassigned']
+          .filter(Boolean)
+          .join(' · '),
+        items
+      };
+    }
+
+    if (menu.kind === 'shift') {
+      const shift = shifts.find((item) => item.id === menu.shiftId);
+      if (!shift) return null;
+      const employee = employees.find((item) => item.id === shift.employee_id);
+      const area = shift.work_area_id ? workAreaById.get(shift.work_area_id) : undefined;
+      return {
+        title: employee ? employee.full_name || employee.email : 'Shift',
+        subtitle: [
+          `${toTimeHHMM(shift.start_at)}–${toTimeHHMM(shift.end_at)}`,
+          area?.name ?? 'No work area',
+          shift.status.replace('_', ' ')
+        ].join(' · '),
+        items: [
+          { kind: 'item', label: 'Edit shift…', onSelect: () => openEditShift(shift) },
+          {
+            kind: 'item',
+            label: shift.clocked_in_at ? 'Clock out' : 'Clock in',
+            detail: shift.clocked_in_at ? `In at ${toTimeHHMM(shift.clocked_in_at)}` : undefined,
+            onSelect: () => void toggleClock(shift)
+          },
+          {
+            kind: 'item',
+            label: 'Assign break task',
+            detail: `${shift.break_minutes} min`,
+            onSelect: () => void assignBreak(shift)
+          },
+          { kind: 'separator' },
+          { kind: 'item', label: 'Delete shift', danger: true, onSelect: () => void removeShift(shift) }
+        ]
+      };
+    }
+
+    if (menu.kind === 'slot') {
+      const employee = employees.find((item) => item.id === menu.employeeId);
+      if (!employee) return null;
+      const minutes = Math.round(clamp(menu.minutes ?? nowMinutes, 0, 23 * 60) / 15) * 15;
+      const items: MenuEntry[] = [];
+      if (showShifts) {
+        items.push({ kind: 'item', label: `New shift at ${minutesToHHMM(minutes)}`, onSelect: () => openCreateShift(employee.id, minutes) });
+      }
+      if (showTasks) {
+        items.push({ kind: 'item', label: `New task at ${minutesToHHMM(minutes)}`, onSelect: () => openCreateTask(employee.id, minutes) });
+      }
+      items.push(
+        { kind: 'separator' },
+        {
+          kind: 'item',
+          label: 'Message…',
+          onSelect: () => {
+            setFormError(null);
+            setMessageDraft({ employeeId: employee.id, subject: '', message: '' });
+          }
+        },
+        {
+          kind: 'item',
+          label: 'Note task…',
+          onSelect: () => {
+            setFormError(null);
+            setNoteDraft({ employeeId: employee.id, note: '' });
+          }
+        },
+        {
+          kind: 'item',
+          label: `Board note about ${employee.full_name || employee.email}…`,
+          onSelect: () => startNote(`employee:${employee.id}`)
+        }
+      );
+      return {
+        title: employee.full_name || employee.email,
+        subtitle: `${selectedDate} · ${minutesToHHMM(minutes)}`,
+        items
+      };
+    }
+
+    if (menu.kind === 'area') {
+      const area = menu.workAreaId ? workAreaById.get(menu.workAreaId) : undefined;
+      if (!area) return null;
+      return {
+        title: area.name,
+        subtitle: `${selectedDate} · work area`,
+        items: [
+          { kind: 'item', label: `Board note about ${area.name}…`, onSelect: () => startNote(`area:${area.id}`) },
+          { kind: 'separator' },
+          { kind: 'item', label: 'Scroll to current time', onSelect: scrollToNow }
+        ]
+      };
+    }
+
+    const filtersActive = taskStatusFilter !== 'all' || taskPriorityFilter !== 'all' || taskSearch.trim().length > 0;
+    const boardItems: MenuEntry[] = [];
+    if (showShifts) {
+      boardItems.push({
+        kind: 'item',
+        label: 'New shift…',
+        disabled: !employees.length,
+        onSelect: () => openCreateShift(employees[0]?.id ?? '', nowMinutes)
+      });
+    }
+    if (showTasks) {
+      boardItems.push({
+        kind: 'item',
+        label: 'New task…',
+        disabled: !employees.length,
+        onSelect: () => openCreateTask()
+      });
+    }
+    boardItems.push({
+      kind: 'item',
+      label: 'New work area…',
+      onSelect: () => {
+        setFormError(null);
+        setAreaDraft({ name: '', description: '', color: WORK_AREA_COLORS[0] });
+      }
+    });
+    boardItems.push(
+      { kind: 'item', label: 'Board note…', onSelect: () => startNote('') },
+      { kind: 'separator' },
+      { kind: 'item', label: 'Scroll to current time', onSelect: scrollToNow }
+    );
+    if (filtersActive) {
+      boardItems.push({
+        kind: 'item',
+        label: 'Reset task filters',
+        onSelect: () => {
+          setTaskSearch('');
+          setTaskStatusFilter('all');
+          setTaskPriorityFilter('all');
+        }
+      });
+    }
+    return { title: 'Operations board', subtitle: `${selectedDate} · right-click actions`, items: boardItems };
+  }
+
   async function run(action: () => Promise<void>, close?: () => void) {
     if (formBusy) return;
     setFormBusy(true);
@@ -531,6 +1199,8 @@ export function TimelineBoard({
       : 8 * 60;
     node.scrollLeft = Math.max(0, minutes * ppm - node.clientWidth / 3);
   }
+
+  const menuView = buildMenu();
 
   return (
     <section className="rs-board">
@@ -602,18 +1272,27 @@ export function TimelineBoard({
           <span className="presence-pill">Off Shift {presence.offShift}</span>
         </div>
         <div className="rs-board-toolbar-group rs-legend">
-          {showShifts ? <span><i className="rs-dot" style={{ background: '#1f56b9' }} />Shift</span> : null}
+          {showShifts ? <span><i className="rs-legend-line" />Shift</span> : null}
           {showTasks ? <span><i className="rs-dot" style={{ background: '#2b6cb0' }} />Task</span> : null}
           {showTasks ? <span><i className="rs-dot" style={{ background: '#b02033' }} />Critical</span> : null}
+          {showShifts ? <span><i className="rs-legend-swatch" />Clock / ack issue</span> : null}
+          {showShifts ? <span><i className="rs-legend-swatch pto" />Time off / leave</span> : null}
+          {showShifts ? <span><i className="rs-legend-swatch suspension" />Suspension</span> : null}
           <span className="rs-board-hint">
-            {showShifts ? 'Drag bars to move · click a row to add a shift' : 'Drag task bars to move them'}
+            {showShifts
+              ? 'Drag the shift line or a task puck to move it · click a row to add a shift · right-click for actions'
+              : 'Drag task pucks to move them · right-click for actions'}
           </span>
         </div>
       </div>
 
       <div className="rs-board-body">
         <div className="rs-board-scroll" ref={scrollRef}>
-          <div className="rs-board-canvas" style={{ width: LEFT_WIDTH + gridWidth + 2 }}>
+          <div
+            className="rs-board-canvas"
+            style={{ width: LEFT_WIDTH + gridWidth + 2 }}
+            onContextMenu={(event) => openMenu(event, { kind: 'board' })}
+          >
             <div className="rs-board-head">
               <div className="rs-board-head-left" style={{ width: LEFT_WIDTH }}>Employee</div>
               <div className="rs-board-head-track" style={{ width: gridWidth }}>
@@ -621,7 +1300,7 @@ export function TimelineBoard({
                   <div
                     key={hour}
                     className="rs-hour-label"
-                    style={{ left: hour * pxPerHour, width: pxPerHour }}
+                    style={{ left: `${(hour / 24) * 100}%`, width: `${100 / 24}%` }}
                   >
                     {minutesToHHMM(hour * 60)}
                   </div>
@@ -635,29 +1314,55 @@ export function TimelineBoard({
 
             {groups.map((group) => (
               <div key={group.key}>
-                <div className="rs-area-row">
+                <div
+                  className="rs-area-row"
+                  onContextMenu={(event) =>
+                    openMenu(
+                      event,
+                      group.area
+                        ? { kind: 'area', workAreaId: group.area.id }
+                        : { kind: 'board' }
+                    )
+                  }
+                >
                   <div className="rs-area-label" style={{ width: LEFT_WIDTH }}>
                     {group.area?.name ?? 'Unassigned Work Area'}
                     <span>{group.employees.length}</span>
                   </div>
                   <div className="rs-area-track" style={{ width: gridWidth }} />
                 </div>
+                {group.area ? renderNoteStrips(notesByArea.get(group.area.id) ?? [], 'area') : null}
 
                 {group.employees.map((employee) => {
                   const employeeShifts = shiftsByEmployee.get(employee.id) ?? [];
                   const employeeAssignments = assignmentsByEmployee.get(employee.id) ?? [];
+                  const leave = leaveByEmployee.get(employee.id);
+                  const gaps = shiftGaps(employeeShifts);
                   return (
+                    <Fragment key={employee.id}>
                     <div
-                      key={employee.id}
                       className="rs-row"
                       style={{ height: ROW_HEIGHT }}
                     >
-                      <div className="rs-row-label" style={{ width: LEFT_WIDTH }}>
+                      <div
+                        className="rs-row-label"
+                        style={{ width: LEFT_WIDTH }}
+                        onContextMenu={(event) => openMenu(event, { kind: 'slot', employeeId: employee.id, minutes: nowMinutes })}
+                      >
                         <span className="rs-row-name">{employee.full_name || employee.email}</span>
                         <span className="rs-row-meta">
+                          {leave ? (
+                            <span className={`rs-row-leave kind-${leave.kind}`} title={leave.detail}>
+                              {leave.label}
+                            </span>
+                          ) : null}
                           {employeeShifts.length > 0
-                            ? `${toTimeHHMM(employeeShifts[0].start_at)}–${toTimeHHMM(employeeShifts[0].end_at)}`
-                            : 'No shift'}
+                            ? `${toTimeHHMM(employeeShifts[0].start_at)}–${toTimeHHMM(employeeShifts[0].end_at)}${
+                                employeeShifts.length > 1 ? ` +${employeeShifts.length - 1}` : ''
+                              }`
+                            : leave
+                              ? 'On leave'
+                              : 'No shift'}
                           {showTasks && employeeAssignments.length > 0
                             ? ` · ${employeeAssignments.length} task${employeeAssignments.length === 1 ? '' : 's'}`
                             : ''}
@@ -678,14 +1383,36 @@ export function TimelineBoard({
                         className="rs-row-track"
                         style={{
                           width: gridWidth,
-                          backgroundSize: `${pxPerHour}px 100%, ${pxPerHour / 2}px 100%`
+                          backgroundSize: `${gridWidth / 24}px 100%, ${gridWidth / 48}px 100%`
                         }}
                         onClick={(event) => {
                           if (!showShifts) return;
                           if ((event.target as HTMLElement).closest('.rs-bar')) return;
                           openCreateShift(employee.id, shiftClickMinutes(event));
                         }}
+                        onContextMenu={(event) => {
+                          if (!showShifts && !showTasks) return;
+                          openMenu(event, { kind: 'slot', employeeId: employee.id, minutes: shiftClickMinutes(event) });
+                        }}
                       >
+                        {leave ? (
+                          <span
+                            className={`rs-leave-band kind-${leave.kind}`}
+                            aria-hidden="true"
+                            title={leave.detail}
+                          />
+                        ) : null}
+
+                        {showShifts ? gaps.map((gap) => (
+                          <span
+                            key={gap.key}
+                            className="rs-shift-gap"
+                            style={{ left: gap.left * ppm, width: gap.width * ppm }}
+                            title={gap.label}
+                            aria-hidden="true"
+                          />
+                        )) : null}
+
                         {isToday ? (
                           <span className="rs-now-line" style={{ left: nowMinutes * ppm }} />
                         ) : null}
@@ -696,27 +1423,46 @@ export function TimelineBoard({
                           const width = Math.max(10, (end - start) * ppm);
                           const area = shift.work_area_id ? workAreaById.get(shift.work_area_id) : null;
                           const color = area?.color && /^#[0-9a-f]{6}$/i.test(area.color) ? area.color : '#1f56b9';
+                          const alert = shiftAlert(shift, employeeAssignments);
+                          const multiplier = Number(shift.pay_multiplier);
+                          const overtime = shift.is_unscheduled_overtime || multiplier > 1;
                           const dragOffset = drag?.kind === 'shift' && drag.id === shift.id ? drag.deltaMinutes * ppm : 0;
                           return (
                             <button
                               key={shift.id}
                               type="button"
-                              className={`rs-bar rs-shift-bar ${statusClass(shift.status)}${drag?.kind === 'shift' && drag.id === shift.id ? ' rs-dragging' : ''}`}
-                              style={{ left: start * ppm + dragOffset, width, background: color }}
-                              title={`${area?.name ?? 'No work area'} ${toTimeHHMM(shift.start_at)}–${toTimeHHMM(shift.end_at)} (${shift.status}) — drag to move`}
+                              className={`rs-shift-line ${statusClass(shift.status)}${alert ? ` alert-${alert}` : ''}${width < 52 ? ' compact' : ''}${drag?.kind === 'shift' && drag.id === shift.id ? ' rs-dragging' : ''}`}
+                              style={{ left: start * ppm + dragOffset, width, color }}
+                              title={`${area?.name ?? 'No work area'} ${toTimeHHMM(shift.start_at)}–${toTimeHHMM(shift.end_at)} (${shift.status.replace('_', ' ')})${alert ? ` — ${SHIFT_ALERT_HINT[alert]}` : ''} — drag to move, right-click for actions`}
                               onPointerDown={(event) => beginDrag(event, 'shift', shift.id)}
+                              onContextMenu={(event) => openMenu(event, { kind: 'shift', shiftId: shift.id })}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (Date.now() < skipClickRef.current) return;
                                 openEditShift(shift);
                               }}
                             >
-                              <span className="rs-bar-label">
-                                {toTimeHHMM(shift.start_at)}–{toTimeHHMM(shift.end_at)}
-                                {area ? ` · ${area.name}` : ''}
+                              <span className="rs-shift-line-label">
+                                <span className="rs-shift-line-time">
+                                  {toTimeHHMM(shift.start_at)}–{toTimeHHMM(shift.end_at)}
+                                </span>
+                                {overtime ? (
+                                  <span
+                                    className="rs-shift-line-chip ot"
+                                    title={`Overtime shift${shift.is_unscheduled_overtime ? ' (unscheduled)' : ''}${Number.isFinite(multiplier) ? ` — ${multiplier.toFixed(1)}x pay` : ''}`}
+                                  >
+                                    {Number.isFinite(multiplier) && multiplier > 1 ? `OT ${multiplier.toFixed(1)}x` : 'OT'}
+                                  </span>
+                                ) : null}
+                                {alert ? (
+                                  <span className={`rs-shift-line-chip alert ${alert}`}>{SHIFT_ALERT_LABEL[alert]}</span>
+                                ) : null}
+                                {shift.clocked_in_at ? <span className="rs-shift-line-chip">IN</span> : null}
+                                {shift.shift_pool_claimed_at ? <span className="rs-shift-line-chip">POOL</span> : null}
+                                {area ? <span className="rs-shift-line-area">{area.name}</span> : null}
                               </span>
-                              {shift.clocked_in_at ? <span className="rs-bar-flag">IN</span> : null}
-                              {shift.shift_pool_claimed_at ? <span className="rs-bar-flag">POOL</span> : null}
+                              <span className="rs-shift-line-band" aria-hidden="true" />
+                              <span className="rs-shift-line-track" aria-hidden="true" />
                             </button>
                           );
                         }) : null}
@@ -727,15 +1473,21 @@ export function TimelineBoard({
                           const start = clamp(minutesIntoDay(task.start_at, selectedDate), 0, 1440);
                           const end = clamp(minutesIntoDay(task.end_at, selectedDate), 0, 1440);
                           const width = Math.max(8, (end - start) * ppm);
+                          const ackOverdue =
+                            !assignment.acknowledged_at &&
+                            task.status !== 'done' &&
+                            task.status !== 'cancelled' &&
+                            nowDate.getTime() > new Date(task.start_at).getTime() + TASK_ACK_WINDOW_MS;
                           const dragOffset = drag?.kind === 'task' && drag.id === task.id ? drag.deltaMinutes * ppm : 0;
                           return (
                             <button
                               key={assignment.id}
                               type="button"
-                              className={`rs-bar rs-task-bar ${task.status}${drag?.kind === 'task' && drag.id === task.id ? ' rs-dragging' : ''}`}
+                              className={`rs-bar rs-task-bar ${task.status}${ackOverdue ? ' ack-overdue' : ''}${drag?.kind === 'task' && drag.id === task.id ? ' rs-dragging' : ''}`}
                               style={{ left: start * ppm + dragOffset, width, background: priorityColor(task.priority) }}
-                              title={`${task.title} (${task.priority}, ${task.status}) — drag to move`}
+                              title={`${task.title} (${task.priority}, ${task.status})${ackOverdue ? ' — acknowledgement overdue' : ''} — drag to move, right-click for actions`}
                               onPointerDown={(event) => beginDrag(event, 'task', task.id)}
+                              onContextMenu={(event) => openMenu(event, { kind: 'task', taskId: task.id, employeeId: employee.id })}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (Date.now() < skipClickRef.current) return;
@@ -749,6 +1501,8 @@ export function TimelineBoard({
                         }) : null}
                       </div>
                     </div>
+                    {renderNoteStrips(notesByEmployee.get(employee.id) ?? [], 'employee')}
+                    </Fragment>
                   );
                 })}
               </div>
@@ -756,7 +1510,8 @@ export function TimelineBoard({
           </div>
         </div>
 
-        {showTasks && filters.unassigned ? (
+        <div className="rs-board-side">
+          {showTasks && filters.unassigned ? (
           <aside className="rs-unassigned">
             <header>
               <strong>Unassigned Tasks</strong>
@@ -766,7 +1521,11 @@ export function TimelineBoard({
               {unassignedTasks.length === 0 ? (
                 <p className="empty-state">Every task is assigned.</p>
               ) : unassignedTasks.map((task) => (
-                <article key={task.id} className="rs-unassigned-item">
+                <article
+                  key={task.id}
+                  className="rs-unassigned-item"
+                  onContextMenu={(event) => openMenu(event, { kind: 'task', taskId: task.id, employeeId: '' })}
+                >
                   <button type="button" className="rs-unassigned-title" onClick={() => openTask(task.id)}>
                     {task.title}
                   </button>
@@ -797,8 +1556,140 @@ export function TimelineBoard({
               <button type="button" onClick={() => openCreateTask()}>New Task</button>
             </footer>
           </aside>
-        ) : null}
+          ) : null}
+
+          <aside className="rs-board-notes">
+            <header>
+              <strong>Board Notes</strong>
+              <span>{boardNotes.length}</span>
+            </header>
+            <form
+              className="rs-note-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void addBoardNote();
+              }}
+            >
+              <select
+                className="rs-note-target"
+                aria-label="What the note is about"
+                value={noteTarget}
+                onChange={(event) => setNoteTarget(event.target.value)}
+              >
+                <option value="">About the whole board</option>
+                {employees.length ? (
+                  <optgroup label="About a person">
+                    {employees.map((employee) => (
+                      <option key={employee.id} value={`employee:${employee.id}`}>
+                        {employee.full_name || employee.email}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {workAreas.length ? (
+                  <optgroup label="About a work area">
+                    {workAreas.map((area) => (
+                      <option key={area.id} value={`area:${area.id}`}>{area.name}</option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+              <textarea
+                ref={noteInputRef}
+                rows={2}
+                maxLength={1000}
+                placeholder={`Add a note for ${selectedDate}…`}
+                value={noteBody}
+                onChange={(event) => setNoteBody(event.target.value)}
+              />
+              <div className="rs-note-form-row">
+                <label className="rs-note-visibility">
+                  <input
+                    type="checkbox"
+                    checked={notePublic}
+                    onChange={(event) => setNotePublic(event.target.checked)}
+                  />
+                  Show on kiosk
+                </label>
+                <button type="submit" disabled={noteBusy || !noteBody.trim()}>
+                  {noteBusy ? 'Saving…' : 'Add note'}
+                </button>
+              </div>
+              {noteError ? <p className="rs-note-error">{noteError}</p> : null}
+            </form>
+            <div className="rs-note-list">
+              {boardNotes.length === 0 ? (
+                <p className="empty-state">No notes for this day.</p>
+              ) : boardNotes.map((note) => (
+                <article key={note.id} className={`rs-note ${note.is_public ? 'public' : 'private'}`}>
+                  <div className="rs-note-meta">
+                    <span className={`rs-note-badge ${note.is_public ? 'public' : 'private'}`}>
+                      {note.is_public ? 'Kiosk' : 'Only you'}
+                    </span>
+                    <span>{note.author_name || 'Unknown'}</span>
+                    <time>{toTimeHHMM(note.created_at)}</time>
+                  </div>
+                  {note.employee_name || note.work_area_name ? (
+                    <span className="rs-note-target-label">
+                      About {note.employee_name || note.work_area_name}
+                    </span>
+                  ) : null}
+                  <p>{note.body}</p>
+                  {note.created_by === actorId ? (
+                    <button
+                      type="button"
+                      className="rs-note-delete"
+                      disabled={noteBusyId === note.id}
+                      onClick={() => void removeBoardNote(note.id)}
+                    >
+                      {noteBusyId === note.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </aside>
+        </div>
       </div>
+
+      {menu && menuView ? (
+        <div
+          ref={menuRef}
+          className="rs-context-menu"
+          role="menu"
+          aria-label={menuView.title}
+          style={{ left: menu.x, top: menu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <header className="rs-context-menu-head">
+            <strong>{menuView.title}</strong>
+            {menuView.subtitle ? <span>{menuView.subtitle}</span> : null}
+          </header>
+          <ul>
+            {menuView.items.map((item, index) =>
+              item.kind === 'separator' ? (
+                <li key={`separator-${index}`} className="rs-context-separator" role="separator" />
+              ) : (
+                <li key={`${item.label}-${index}`}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={item.danger ? 'danger' : undefined}
+                    disabled={item.disabled}
+                    onClick={() => {
+                      setMenu(null);
+                      item.onSelect();
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    {item.detail ? <em>{item.detail}</em> : null}
+                  </button>
+                </li>
+              )
+            )}
+          </ul>
+        </div>
+      ) : null}
 
       {shiftDraft ? (
         <div className="ops-editor-backdrop" onClick={() => setShiftDraft(null)}>

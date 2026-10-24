@@ -16,7 +16,7 @@ SHIFT_COLUMNS = """
   s.id, s.employee_id, s.work_area_id, s.start_at, s.end_at, s.status::text as status,
   s.clocked_in_at, s.clocked_out_at, s.clock_in_latitude, s.clock_in_longitude,
   s.clock_in_accuracy_meters, s.clock_in_device, s.clock_in_is_mobile,
-  s.is_unscheduled_overtime, s.pay_multiplier, s.worked_minutes, s.break_minutes,
+  s.is_unscheduled_overtime, s.pay_multiplier::float8 as pay_multiplier, s.worked_minutes, s.break_minutes,
   s.is_shift_pool, s.shift_pool_posted_at, s.shift_pool_posted_by,
   s.shift_pool_claimed_at, s.shift_pool_claimed_by, s.notes,
   s.created_by, s.updated_by, s.created_at, s.updated_at
@@ -186,6 +186,29 @@ def dashboard(
         text("select public.fetch_shift_intelligence(cast(:day as date), 14)"),
         {"day": selected_date},
     ).scalar()
+    board_notes = [
+        dict(row)
+        for row in session.execute(
+            text(
+                """
+                select n.id, n.note_date, n.body, n.is_public, n.created_by,
+                       n.employee_id, n.work_area_id,
+                       p.full_name as author_name,
+                       e.full_name as employee_name,
+                       w.name as work_area_name,
+                       n.created_at, n.updated_at
+                from public.board_notes n
+                left join public.profiles p on p.id = n.created_by
+                left join public.profiles e on e.id = n.employee_id
+                left join public.work_areas w on w.id = n.work_area_id
+                where n.note_date = cast(:day as date)
+                  and (n.is_public or n.created_by = :viewer)
+                order by n.created_at desc
+                """
+            ),
+            {"day": selected_date, "viewer": user.id},
+        ).mappings().all()
+    ]
 
     return {
         "employees": employees,
@@ -202,6 +225,7 @@ def dashboard(
         "shiftSwapRequests": swaps,
         "shiftIntelligence": intelligence if isinstance(intelligence, dict) else json.loads(intelligence or "{}"),
         "disciplineActions": discipline,
+        "boardNotes": board_notes,
     }
 
 

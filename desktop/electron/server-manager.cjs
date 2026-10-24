@@ -343,7 +343,7 @@ class ServerManager extends EventEmitter {
         this.log('stderr', error.message);
         resolve({ code: -1, output: output.join('') });
       });
-      child.on('exit', (code) => resolve({ code: code ?? -1, output: output.join('') }));
+      child.on('close', (code) => resolve({ code: code ?? -1, output: output.join('') }));
     });
   }
 
@@ -392,21 +392,59 @@ class ServerManager extends EventEmitter {
       this.log('system', 'Virtual environment already exists.');
     }
     this.log('system', 'Upgrading pip...');
-    await this.run(this.venvPythonPath(), ['-m', 'pip', 'install', '--upgrade', 'pip'], { env: { PIP_DISABLE_PIP_VERSION_CHECK: '1' } });
+    const pipUpgrade = await this.run(this.venvPythonPath(), ['-m', 'pip', 'install', '--upgrade', 'pip'], { env: { PIP_DISABLE_PIP_VERSION_CHECK: '1' } });
+    if (pipUpgrade.code !== 0) throw new Error('Could not upgrade pip. Check the log and your network connection.');
     this.log('system', 'Installing backend dependencies...');
     const installed = await this.run(this.venvPythonPath(), ['-m', 'pip', 'install', '-r', 'requirements.txt'], {
       env: { PIP_DISABLE_PIP_VERSION_CHECK: '1' }
     });
     if (installed.code !== 0) throw new Error('Dependency installation failed. See the log for details.');
-    this.log('system', 'Environment ready.');
+    this.log('system', 'Python environment ready.');
+    this.log('system', 'Preparing database and initializing schema...');
+    await this.initDatabase();
+    this.log('system', 'Environment and database setup complete.');
     return this.check();
+  }
+
+  async ensureDatabaseExists() {
+    const env = this.readEnv();
+    const databaseUrl = env.DATABASE_URL || '';
+    let target;
+    try {
+      target = new URL(databaseUrl.replace(/^postgresql\+psycopg:/, 'postgresql:'));
+    } catch {
+      throw new Error('DATABASE_URL is invalid. Enter a PostgreSQL URL before initializing the database.');
+    }
+    const database = decodeURIComponent(target.pathname.replace(/^\//, ''));
+    if (!database) throw new Error('DATABASE_URL must include a database name.');
+    target.pathname = '/postgres';
+    target.searchParams.set('connect_timeout', '5');
+    const script = [
+      'import psycopg, sys',
+      'from psycopg import sql',
+      'database = sys.argv[2]',
+      'with psycopg.connect(sys.argv[1], autocommit=True) as conn:',
+      '    found = conn.execute("select 1 from pg_database where datname = %s", (database,)).fetchone()',
+      '    if not found:',
+      '        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))',
+      '        print("Created database " + database)',
+      '    else:',
+      '        print("Database " + database + " already exists")'
+    ].join('\n');
+    const result = await this.run(this.venvPythonPath(), ['-c', script, target.toString(), database]);
+    if (result.code !== 0) {
+      const detail = cliFailureMessage(result.output, '');
+      throw new Error(`Could not prepare PostgreSQL database "${database}". Verify PostgreSQL is running, DATABASE_URL credentials are correct, and the user can create databases.${detail ? ` ${detail}` : ''}`);
+    }
   }
 
   async initDatabase() {
     if (!fs.existsSync(this.venvPythonPath())) throw new Error('Set up the Python environment first.');
+    this.log('system', 'Preparing PostgreSQL database...');
+    await this.ensureDatabaseExists();
     this.log('system', 'Initializing database schema...');
     const result = await this.run(this.venvPythonPath(), ['-m', 'app.cli', 'init']);
-    if (result.code !== 0) throw new Error('Database initialization failed. Check DATABASE_URL and that Postgres is running.');
+    if (result.code !== 0) throw new Error(`Database initialization failed. Check DATABASE_URL and the setup log. ${cliFailureMessage(result.output, '')}`.trim());
     this.log('system', 'Database initialized.');
     return result.output;
   }

@@ -23,7 +23,7 @@ terminal:
 | Node.js | 20+ | only needed to run or package the manager itself |
 
 The manager does **not** bundle Python or PostgreSQL. It detects Python and
-installs the backend's Python packages into `backend/.venv`.
+installs the backend's Python packages into `backend/.venv`. PostgreSQL installation and service startup remain OS-level prerequisites; the manager will not silently install system packages.
 
 ## Run from source
 
@@ -39,15 +39,11 @@ npm install
 npm start
 ```
 
-On first launch the **Setup** tab walks through the three required steps:
+On first launch the **Setup** tab prepares the Python environment and database:
 
-1. **Python environment** – creates `backend/.venv` and runs `pip install -r requirements.txt`.
-2. **Database** – enter `DATABASE_URL` (for example
-   `postgresql+psycopg://postgres@127.0.0.1:5432/suite`), test the connection,
-   then **Initialize Schema**. The schema is applied automatically by the
-   backend on startup as well, so a fresh empty database works too.
-3. **Administrator account** – creates the first admin. Additional accounts can
-   then be added from the **Users** tab.
+1. **Python environment** – creates `backend/.venv`, upgrades pip, installs dependencies, creates the configured PostgreSQL database when it is missing (using the URL's user credentials), and initializes the schema. Setup waits for every install process to finish before invoking the database CLI.
+2. **Database** – setup uses the configured `DATABASE_URL`. PostgreSQL must already be installed and running, and its configured user must be able to connect to the maintenance database and create databases. Use **Test Connection** to verify access; **Initialize Schema** can be rerun safely.
+3. **Administrator account** – create the first admin after database setup. Additional accounts can then be added from the **Users** tab.
 
 Then return to **Overview** and press **Start Server**. The LAN addresses are
 listed with **Open** and **Board** buttons; share those with employees.
@@ -141,7 +137,7 @@ Notes:
 
 - Build each installer on its target OS where possible. Windows installers can
   be produced on macOS/Linux but require Wine; macOS installers require macOS.
-- The packaged app still expects Python and PostgreSQL on the machine.
+- The packaged app still expects Python and a running PostgreSQL server on the machine.
 - Code signing/notarization is not configured; macOS Gatekeeper will warn on
   unsigned builds.
 
@@ -178,8 +174,8 @@ interval or press its refresh button.
 **Port already in use** – another copy of the server is running. Stop it, or
 change the port in Settings and save the server config.
 
-**Database connection failed** – confirm Postgres is running and the URL uses
-the `postgresql+psycopg://` scheme, the correct user/password/database and port.
+**Database setup failed** – confirm Postgres is installed and running, and the URL uses
+the `postgresql+psycopg://` scheme with valid credentials. Creating a missing database requires permission to connect to the `postgres` maintenance database and `CREATE DATABASE`. The Setup log now includes the underlying failure detail.
 
 **The web app does not load** – run `npm run build` in `frontend/`. The manager's
 Readiness panel reports when `frontend/dist/index.html` is missing.

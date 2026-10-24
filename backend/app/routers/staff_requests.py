@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import text
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_organization
 from ..deps import RequestUser, get_current_user, get_db, require_admin, require_manager
+from ..leave import LEAVE_EXCEPTION_CODES, wipe_employee_window
 
 router = APIRouter(prefix="/api", tags=["requests"])
 
@@ -17,17 +18,8 @@ def _day_start(value: str) -> datetime:
 
 
 def _delete_shifts_in_window(session: Session, employee_id: str, start_date: str, end_date: str) -> None:
-    start = _day_start(start_date)
-    end = _day_start(end_date) + timedelta(days=1)
-    session.execute(
-        text(
-            """
-            delete from public.shifts
-            where employee_id = :employee
-              and start_at < :end and end_at > :start
-            """
-        ),
-        {"employee": employee_id, "start": start, "end": end},
+    wipe_employee_window(
+        session, employee_id, date.fromisoformat(start_date), date.fromisoformat(end_date)
     )
 
 
@@ -396,24 +388,11 @@ def update_exception(
     ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Exception request not found.")
-    if row["status"] == "approved" and row["exception_code"] == "VAUT":
+    if row["status"] == "approved" and row["exception_code"] in LEAVE_EXCEPTION_CODES:
+        # Approved VAUT and DO days take the employee off the board: clear their shifts
+        # and task assignments for the covered dates.
         _delete_shifts_in_window(
             session, str(row["employee_id"]), row["start_date"].isoformat(), row["end_date"].isoformat()
-        )
-        start = _day_start(row["start_date"].isoformat())
-        end = _day_start(row["end_date"].isoformat()) + timedelta(days=1)
-        session.execute(
-            text(
-                """
-                delete from public.task_assignments
-                where employee_id = :employee
-                  and task_id in (
-                    select id from public.tasks
-                    where start_at < :end and end_at > :start
-                  )
-                """
-            ),
-            {"employee": row["employee_id"], "start": start, "end": end},
         )
     return dict(row)
 

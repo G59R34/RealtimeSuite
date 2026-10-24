@@ -121,6 +121,26 @@ def board(
                 )
             ).mappings().all()
         ]
+        notes = [
+            dict(row)
+            for row in session.execute(
+                text(
+                    """
+                    select n.id, n.body, n.created_at, n.employee_id, n.work_area_id,
+                           p.full_name as author_name,
+                           e.full_name as employee_name,
+                           w.name as work_area_name
+                    from public.board_notes n
+                    left join public.profiles p on p.id = n.created_by
+                    left join public.profiles e on e.id = n.employee_id
+                    left join public.work_areas w on w.id = n.work_area_id
+                    where n.is_public and n.note_date = cast(:day as date)
+                    order by n.created_at
+                    """
+                ),
+                {"day": now.date()},
+            ).mappings().all()
+        ]
 
     return {
         "generated_at": now.isoformat(),
@@ -140,4 +160,5 @@ def board(
         "task_assignments": assignments,
         "overtime_requests": overtime,
         "shift_swap_requests": swaps,
+        "board_notes": notes,
     }

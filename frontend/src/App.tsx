@@ -37,6 +37,7 @@ import {
   clockOutOwnShift,
   clockOutShift,
   completeTrainingAssignment,
+  createBoardNote,
   createDisciplineAction,
   createEmployeeMessage,
   createExceptionRequest,
@@ -46,6 +47,7 @@ import {
   createShiftSwapRequest,
   createTimeOffRequest,
   createWorkArea,
+  deleteBoardNote,
   deleteExceptionRequestByAdmin,
   deleteMonthShiftsAndReset,
   deleteShift,
@@ -579,6 +581,12 @@ export default function App() {
               nowDate={effectiveNow}
               actorId={profile.id}
               busy={dataBusy}
+              boardNotes={adminData.boardNotes ?? []}
+              timeOffRequests={adminData.timeOffRequests ?? []}
+              exceptionRequests={adminData.exceptionRequests ?? []}
+              disciplineActions={adminData.disciplineActions ?? []}
+              onCreateBoardNote={(payload) => runMutation(() => createBoardNote(payload))}
+              onDeleteBoardNote={(noteId) => runMutation(() => deleteBoardNote(noteId))}
               onUpsertShift={(payload) => runMutation(() => upsertShift(payload))}
               onDeleteShift={(shiftId) => runMutation(() => deleteShift(shiftId))}
               onUpdateShiftWorkArea={(shiftId, workAreaId) => runMutation(() => updateShiftWorkArea(shiftId, workAreaId))}

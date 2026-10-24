@@ -343,3 +343,78 @@ body.flash-critical {
     overflow: auto;
   }
 }
+
+/* ------------------------------------------------------------ board notes */
+
+.ob-notes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 28vh;
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ob-notes[hidden] {
+  display: none;
+}
+
+.ob-notes > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--ob-panel-alt);
+  border-bottom: 1px solid var(--ob-line);
+}
+
+.ob-notes h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ob-notes header span {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: var(--ob-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-notes ul {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+}
+
+.ob-notes li.ob-note {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--ob-line);
+  border-left: 5px solid var(--ob-accent);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ob-note-body {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ob-note-meta {
+  font-size: 0.7rem;
+  color: var(--ob-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

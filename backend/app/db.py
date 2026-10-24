@@ -31,6 +31,24 @@ def apply_schema() -> None:
         conn.execute(sql)
 
 
+def apply_additions() -> None:
+    """Apply idempotent additions to databases created before they existed."""
+    sql_dir = settings.schema_file.parent
+    if not sql_dir.is_dir():
+        return
+    # The base schema file is applied by apply_schema(); everything else in the folder
+    # is an idempotent addition and must run in filename order on every startup so a
+    # database created before a column existed picks it up.
+    additions = sorted(
+        path for path in sql_dir.glob("*.sql") if path.name != settings.schema_file.name
+    )
+    if not additions:
+        return
+    with psycopg.connect(psycopg_dsn(), autocommit=True) as conn:
+        for additions_file in additions:
+            conn.execute(additions_file.read_text(encoding="utf-8"))
+
+
 def _set_actor(session: Session, user_id: str | None, role: str | None = None) -> None:
     if not user_id:
         return
