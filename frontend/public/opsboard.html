@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RealtimeSuite · Live Board</title>
+    <link rel="stylesheet" href="/opsboard.css" />
+  </head>
+  <body>
+    <header class="ob-header">
+      <div class="ob-brand">
+        <span class="ob-brand-mark">RS</span>
+        <div>
+          <h1 id="ob-title">RealtimeSuite</h1>
+          <p id="ob-subtitle">Operations Glance Board</p>
+        </div>
+      </div>
+      <div class="ob-header-meta">
+        <span id="ob-announcement" class="ob-announcement">No active announcements</span>
+        <span id="ob-status" class="ob-status syncing">Starting…</span>
+        <time id="ob-clock">--:--:--</time>
+        <button id="ob-fullscreen" type="button" title="Toggle fullscreen">Fullscreen</button>
+      </div>
+    </header>
+
+    <main class="ob-main">
+      <section class="ob-kpis">
+        <article><span>Active Shifts</span><strong id="kpi-active-shifts">0</strong></article>
+        <article><span>Upcoming Shifts</span><strong id="kpi-upcoming-shifts">0</strong></article>
+        <article><span>Active Tasks</span><strong id="kpi-active-tasks">0</strong></article>
+        <article><span>Upcoming Tasks</span><strong id="kpi-upcoming-tasks">0</strong></article>
+        <article><span>Unassigned Tasks</span><strong id="kpi-unassigned-tasks">0</strong></article>
+        <article><span>Clock-In Exceptions</span><strong id="kpi-exceptions">0</strong></article>
+      </section>
+
+      <section class="ob-columns">
+        <article class="ob-panel">
+          <header>
+            <h2>On Now</h2>
+            <span id="ob-now-count">0</span>
+          </header>
+          <ul id="ob-current" class="ob-list"></ul>
+        </article>
+
+        <article class="ob-panel">
+          <header>
+            <h2>Coming Up</h2>
+            <span id="ob-upcoming-count">0</span>
+          </header>
+          <ul id="ob-upcoming" class="ob-list"></ul>
+        </article>
+
+        <article class="ob-panel ob-panel-narrow">
+          <header>
+            <h2>Unassigned</h2>
+            <span id="ob-unassigned-count">0</span>
+          </header>
+          <ul id="ob-unassigned" class="ob-list ob-list-compact"></ul>
+        </article>
+      </section>
+    </main>
+
+    <footer class="ob-footer">
+      <span id="ob-footer-brand">RealtimeSuite · Local Network</span>
+      <span id="ob-footer-updated">Waiting for data…</span>
+    </footer>
+
+    <script src="/opsboard.js" defer></script>
+  </body>
+</html>

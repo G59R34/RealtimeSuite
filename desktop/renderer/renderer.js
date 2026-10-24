@@ -1,0 +1,690 @@
+'use strict';
+
+const api = window.manager;
+
+const state = {
+  status: null,
+  check: null,
+  settings: null,
+  version: '1.0.0',
+  logs: [],
+  users: [],
+  pendingDelete: null,
+  pendingDeleteTimer: null,
+  featureSchema: null,
+  features: null,
+  featureDraft: null
+};
+
+const $ = (id) => document.getElementById(id);
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatUptime(startedAt) {
+  if (!startedAt) return '—';
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function banner(message, kind = 'error') {
+  const node = $('banner');
+  if (!message) {
+    node.className = 'banner hidden';
+    node.textContent = '';
+    return;
+  }
+  node.className = `banner ${kind}`;
+  node.textContent = message;
+}
+
+function setBusy(button, busy, label) {
+  if (!button) return;
+  if (busy) {
+    button.dataset.label = button.textContent;
+    button.textContent = label || 'Working...';
+    button.disabled = true;
+  } else {
+    if (button.dataset.label) button.textContent = button.dataset.label;
+    button.disabled = false;
+  }
+}
+
+async function withBusy(button, label, fn) {
+  banner('');
+  setBusy(button, true, label);
+  try {
+    await fn();
+  } catch (error) {
+    banner(error && error.message ? error.message : String(error));
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function stateLabel(value) {
+  return { stopped: 'Stopped', starting: 'Starting', running: 'Online', stopping: 'Stopping', error: 'Error' }[value] || value;
+}
+
+function renderStatus(status) {
+  if (!status) return;
+  state.status = status;
+  const label = stateLabel(status.state);
+  const dotClass = status.state === 'running'
+    ? 'running'
+    : status.state === 'error'
+      ? 'error'
+      : status.state === 'starting' || status.state === 'stopping'
+        ? 'starting'
+        : 'stopped';
+
+  for (const id of ['status-dot', 'side-dot']) {
+    const node = $(id);
+    node.className = `dot ${dotClass}`;
+  }
+  $('status-pill').className = `status-pill ${dotClass}`;
+  $('status-text').textContent = label;
+  $('side-state').textContent = label;
+  $('side-url').textContent = status.state === 'running' ? status.url : 'Not running';
+
+  const heroTitle = $('hero-title');
+  const heroSubtitle = $('hero-subtitle');
+  if (status.state === 'running') {
+    heroTitle.textContent = 'RealtimeSuite is online';
+    heroSubtitle.textContent = `Listening on port ${status.port}. Share a LAN address below with employees.`;
+  } else if (status.state === 'starting') {
+    heroTitle.textContent = 'Starting server...';
+    heroSubtitle.textContent = 'Waiting for the API to answer health checks.';
+  } else if (status.state === 'stopping') {
+    heroTitle.textContent = 'Stopping server...';
+    heroSubtitle.textContent = 'Finishing active requests.';
+  } else if (status.state === 'error') {
+    heroTitle.textContent = 'Server needs attention';
+    heroSubtitle.textContent = status.lastError || 'The server stopped unexpectedly. Check the log.';
+  } else {
+    heroTitle.textContent = 'RealtimeSuite is stopped';
+    heroSubtitle.textContent = 'Start the server to let employees connect on the local network.';
+  }
+
+  $('fact-pid').textContent = status.pid ? String(status.pid) : '—';
+  $('fact-uptime').textContent = formatUptime(status.startedAt);
+  $('fact-port').textContent = String(status.port);
+  $('fact-auto').textContent = status.autoRestart ? 'On' : 'Off';
+
+  $('btn-start').disabled = status.state === 'running' || status.state === 'starting' || status.state === 'stopping';
+  $('btn-stop').disabled = status.state === 'stopped' || status.state === 'error';
+  $('btn-restart').disabled = status.state === 'starting' || status.state === 'stopping';
+
+  const list = $('address-list');
+  list.textContent = '';
+  const urls = status.lanUrls || [];
+  for (const url of urls) {
+    const row = document.createElement('div');
+    row.className = 'address-row';
+    const code = document.createElement('code');
+    code.textContent = url.replace(/\/$/, '');
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.style.marginTop = '0';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.textContent = 'Open';
+    open.disabled = status.state !== 'running';
+    open.addEventListener('click', () => api.open(url));
+    const board = document.createElement('button');
+    board.type = 'button';
+    board.textContent = 'Board';
+    board.disabled = status.state !== 'running';
+    board.addEventListener('click', () => api.open(`${url.replace(/\/$/, '')}/opsboard.html`));
+    actions.append(open, board);
+    row.append(code, actions);
+    list.appendChild(row);
+  }
+  if (urls.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No network addresses detected.';
+    list.appendChild(empty);
+  }
+}
+
+function checkRow(kind, label, detail, statusText) {
+  return { kind, label, detail, statusText };
+}
+
+function renderChecklist() {
+  if (!state.check) return;
+  const check = state.check;
+  const port = state.status ? state.status.port : check.config.port;
+  const items = [
+    check.backendExists
+      ? checkRow('ok', 'Backend files', 'FastAPI application found.', 'Ready')
+      : checkRow('bad', 'Backend files', 'backend/app/main.py is missing.', 'Missing'),
+    check.python
+      ? checkRow('ok', 'Python', `Python ${check.python.version} detected.`, 'Ready')
+      : checkRow('bad', 'Python', 'Install Python 3.10 or newer.', 'Missing'),
+    check.venvExists
+      ? checkRow('ok', 'Virtual environment', '.venv is present.', 'Ready')
+      : checkRow('warn', 'Virtual environment', 'Create it from the Setup tab.', 'Pending'),
+    check.config.databaseUrl
+      ? checkRow('ok', 'Database URL', check.config.databaseUrl, 'Configured')
+      : checkRow('bad', 'Database URL', 'Set DATABASE_URL in Settings.', 'Missing'),
+    check.config.jwtSecretSet
+      ? checkRow('ok', 'Session secret', 'JWT secret is customised.', 'Secure')
+      : checkRow('warn', 'Session secret', 'Generate a secret in Settings before production use.', 'Default'),
+    check.frontendBuilt
+      ? checkRow('ok', 'Web app build', 'frontend/dist is available.', 'Ready')
+      : checkRow('warn', 'Web app build', 'Run npm run build in frontend/.', 'Missing'),
+    state.status && state.status.state === 'running'
+      ? checkRow('ok', 'Server health', `Answering on port ${port}.`, 'Online')
+      : checkRow('warn', 'Server health', 'The API is not answering yet.', 'Offline')
+  ];
+
+  const list = $('checklist');
+  list.textContent = '';
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.className = item.kind;
+    const icon = document.createElement('span');
+    icon.className = 'check-icon';
+    icon.textContent = item.kind === 'ok' ? '✓' : item.kind === 'warn' ? '!' : '×';
+    const text = document.createElement('div');
+    text.innerHTML = `<strong>${escapeHtml(item.label)}</strong><div class="muted">${escapeHtml(item.detail)}</div>`;
+    const status = document.createElement('strong');
+    status.textContent = item.statusText;
+    li.append(icon, text, status);
+    list.appendChild(li);
+  }
+
+  $('setup-python-detail').textContent = check.python
+    ? `Python ${check.python.version} at ${check.python.path}`
+    : 'Python 3.10+ not found. Install it from python.org, then reopen this window.';
+  $('setup-env-badge').textContent = check.venvExists ? 'Ready' : 'Pending';
+  $('setup-env-badge').className = `step-badge ${check.venvExists ? 'ok' : ''}`;
+
+  const dbConfigured = Boolean(check.config.databaseUrl);
+  $('setup-db-badge').textContent = dbConfigured ? 'Configured' : 'Pending';
+  $('setup-db-badge').className = `step-badge ${dbConfigured ? 'ok' : ''}`;
+
+  if (!$('setup-db-url').matches(':focus')) {
+    $('setup-db-url').value = check.config.databaseUrl;
+  }
+  if (!$('admin-email').value) $('admin-email').value = check.config.adminEmail;
+}
+
+function renderSettings() {
+  if (!state.settings || !state.check) return;
+  const settings = state.settings;
+  const config = state.check.config;
+  if (!$('set-port').matches(':focus')) $('set-port').value = config.port;
+  $('set-host').value = config.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0';
+  if (!$('set-org').matches(':focus')) $('set-org').value = config.organizationName;
+  $('set-autostart').checked = Boolean(settings.autoStart);
+  $('set-autorestart').checked = Boolean(settings.autoRestart);
+  $('set-openonstart').checked = Boolean(settings.openOnStart);
+}
+
+function appendLog(entry) {
+  state.logs.push(entry);
+  if (state.logs.length > 800) state.logs.shift();
+  const view = $('log-view');
+  const line = document.createElement('span');
+  line.className = `log-line ${entry.stream}`;
+  const time = new Date(entry.at).toLocaleTimeString([], { hour12: false });
+  line.innerHTML = `<span class="ts">${escapeHtml(time)}</span><span class="msg">${escapeHtml(entry.line)}</span>`;
+  view.appendChild(line);
+  while (view.childElementCount > 800) view.removeChild(view.firstChild);
+  if ($('log-follow').checked) view.scrollTop = view.scrollHeight;
+}
+
+function renderLogs(entries) {
+  state.logs = entries.slice();
+  const view = $('log-view');
+  view.textContent = '';
+  for (const entry of state.logs) appendLog(entry);
+  view.scrollTop = view.scrollHeight;
+}
+
+function applyState(payload) {
+  if (!payload) return;
+  state.status = payload.status || state.status;
+  state.check = payload.check || state.check;
+  state.settings = payload.settings || state.settings;
+  state.version = payload.version || state.version;
+  $('app-version').textContent = `v${state.version}`;
+  renderStatus(state.status);
+  renderChecklist();
+  renderSettings();
+  if (payload.logs) renderLogs(payload.logs);
+}
+
+async function refresh() {
+  const payload = await api.getState();
+  applyState(payload);
+}
+
+// --------------------------------------------------------------- users tab
+
+function generatePassword() {
+  const bytes = new Uint8Array(9);
+  crypto.getRandomValues(bytes);
+  const raw = Array.from(bytes, (value) => value.toString(36).padStart(2, '0')).join('');
+  return `RS-${raw.slice(0, 6)}-${raw.slice(6, 12)}`;
+}
+
+function formatCreatedAt(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+}
+
+function resetPendingDelete() {
+  state.pendingDelete = null;
+  if (state.pendingDeleteTimer) {
+    clearTimeout(state.pendingDeleteTimer);
+    state.pendingDeleteTimer = null;
+  }
+}
+
+function renderUsers() {
+  const body = $('user-table-body');
+  body.textContent = '';
+  $('user-count').textContent = state.users.length
+    ? `${state.users.length} account${state.users.length === 1 ? '' : 's'}`
+    : 'No accounts';
+
+  if (state.users.length === 0) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.className = 'muted';
+    cell.textContent = 'No accounts yet. Create the first administrator in Setup, then add people here.';
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+
+  for (const user of state.users) {
+    const row = document.createElement('tr');
+
+    const name = document.createElement('td');
+    name.textContent = user.full_name || '—';
+    name.title = `Created ${formatCreatedAt(user.created_at)}`;
+
+    const email = document.createElement('td');
+    email.textContent = user.email;
+
+    const role = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `role-badge ${user.role === 'admin' ? 'admin' : 'employee'}`;
+    badge.textContent = user.role === 'admin' ? 'Admin' : 'Employee';
+    role.appendChild(badge);
+
+    const onboarding = document.createElement('td');
+    onboarding.textContent = user.onboarding_complete ? 'Complete' : 'Not started';
+    onboarding.className = user.onboarding_complete ? '' : 'muted';
+
+    const scheduled = document.createElement('td');
+    scheduled.textContent = `${user.shifts} shift${user.shifts === 1 ? '' : 's'} · ${user.tasks} task${user.tasks === 1 ? '' : 's'}`;
+
+    const actions = document.createElement('td');
+    actions.className = 'actions';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'small danger';
+    const armed = state.pendingDelete === user.email;
+    if (armed) button.classList.add('armed');
+    button.textContent = armed ? 'Confirm delete' : 'Delete';
+    button.title = `Deletes ${user.full_name || user.email} and their shifts, task assignments and requests`;
+    button.addEventListener('click', () => {
+      if (state.pendingDelete !== user.email) {
+        resetPendingDelete();
+        state.pendingDelete = user.email;
+        state.pendingDeleteTimer = setTimeout(() => {
+          resetPendingDelete();
+          renderUsers();
+        }, 5000);
+        renderUsers();
+        return;
+      }
+      resetPendingDelete();
+      void withBusy(button, 'Deleting...', async () => {
+        const result = await api.deleteUser({ email: user.email });
+        if (!result.ok) throw new Error(result.error);
+        state.users = result.users;
+        renderUsers();
+        banner(`Deleted ${user.email}.`, 'ok');
+      });
+    });
+    actions.appendChild(button);
+
+    row.append(name, email, role, onboarding, scheduled, actions);
+    body.appendChild(row);
+  }
+}
+
+async function loadUsers() {
+  resetPendingDelete();
+  $('user-list-status').textContent = 'Loading accounts...';
+  const result = await api.listUsers();
+  if (!result.ok) {
+    state.users = [];
+    renderUsers();
+    $('user-list-status').textContent = result.error;
+    $('user-count').textContent = 'Unavailable';
+    return;
+  }
+  state.users = result.users;
+  $('user-list-status').textContent = '';
+  renderUsers();
+}
+
+// ------------------------------------------------------------ features tab
+
+function featureChanges() {
+  if (!state.features || !state.featureDraft) return {};
+  const patch = {};
+  for (const [key, value] of Object.entries(state.featureDraft)) {
+    if (state.features[key] !== value) patch[key] = value;
+  }
+  return patch;
+}
+
+function updateFeatureSummary() {
+  const node = $('feature-summary');
+  const changes = Object.keys(featureChanges()).length;
+  if (changes === 0) {
+    node.className = 'banner hidden';
+    node.textContent = '';
+    return;
+  }
+  node.className = 'banner warn';
+  node.textContent = `${changes} unsaved change${changes === 1 ? '' : 's'}. Save to apply them to RealtimeSuite.`;
+}
+
+function renderFeatures() {
+  const container = $('feature-groups');
+  container.textContent = '';
+  const schema = state.featureSchema;
+  const draft = state.featureDraft;
+  if (!schema || !draft) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'Feature schema is unavailable.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const groups = schema.groups && Object.keys(schema.groups).length
+    ? schema.groups
+    : { Features: Object.keys(draft) };
+  const meta = schema.meta || {};
+
+  for (const [groupName, keys] of Object.entries(groups)) {
+    const card = document.createElement('article');
+    card.className = 'feature-group';
+    const heading = document.createElement('h2');
+    heading.textContent = groupName;
+    card.appendChild(heading);
+
+    for (const key of keys) {
+      const info = meta[key] || {};
+      const row = document.createElement('div');
+      row.className = 'feature-row';
+      row.dataset.key = key;
+      if (state.features && state.features[key] !== draft[key]) row.classList.add('changed');
+
+      const text = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = info.label || key.replace(/_/g, ' ');
+      const description = document.createElement('p');
+      description.textContent = info.description || '';
+      text.append(title, description);
+
+      const label = document.createElement('label');
+      label.className = 'switch';
+      label.title = `Toggle ${info.label || key}`;
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = Boolean(draft[key]);
+      input.setAttribute('aria-label', info.label || key);
+      const track = document.createElement('span');
+      input.addEventListener('change', () => {
+        state.featureDraft[key] = input.checked;
+        row.classList.toggle('changed', state.features ? state.features[key] !== input.checked : true);
+        updateFeatureSummary();
+      });
+      label.append(input, track);
+
+      row.append(text, label);
+      card.appendChild(row);
+    }
+
+    container.appendChild(card);
+  }
+  updateFeatureSummary();
+}
+
+async function loadFeatures() {
+  const result = await api.getFeatures();
+  const container = $('feature-groups');
+  if (!result.ok) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'muted';
+    message.textContent = result.error;
+    container.appendChild(message);
+    $('feature-summary').className = 'banner hidden';
+    return;
+  }
+  state.featureSchema = result.schema;
+  state.features = result.flags;
+  state.featureDraft = { ...result.flags };
+  renderFeatures();
+}
+
+// ---------------------------------------------------------------- navigation
+
+document.querySelectorAll('.nav button').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.nav button').forEach((node) => node.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach((node) => node.classList.remove('active'));
+    button.classList.add('active');
+    const tab = $('tab-' + button.dataset.tab);
+    if (tab) tab.classList.add('active');
+    if (button.dataset.tab === 'logs') {
+      const view = $('log-view');
+      view.scrollTop = view.scrollHeight;
+    }
+    if (button.dataset.tab === 'users') {
+      void loadUsers().catch((error) => { $('user-list-status').textContent = error.message; });
+    }
+    if (button.dataset.tab === 'features') {
+      void loadFeatures().catch((error) => banner(error.message || String(error)));
+    }
+  });
+});
+
+// ------------------------------------------------------------------ actions
+
+$('btn-start').addEventListener('click', () => withBusy($('btn-start'), 'Starting...', async () => {
+  const result = await api.start();
+  if (!result.ok) throw new Error(result.error);
+  await refresh();
+  banner('Server started. Share a LAN address to let employees sign in.', 'ok');
+}));
+
+$('btn-stop').addEventListener('click', () => withBusy($('btn-stop'), 'Stopping...', async () => {
+  await api.stop();
+  await refresh();
+  banner('Server stopped.', 'ok');
+}));
+
+$('btn-restart').addEventListener('click', () => withBusy($('btn-restart'), 'Restarting...', async () => {
+  const result = await api.restart();
+  if (!result.ok) throw new Error(result.error);
+  await refresh();
+  banner('Server restarted.', 'ok');
+}));
+
+$('btn-open-app').addEventListener('click', () => api.open('app'));
+$('btn-open-board').addEventListener('click', () => api.open('board'));
+$('btn-open-backend').addEventListener('click', () => api.open('backend'));
+$('btn-open-logs').addEventListener('click', () => api.open('logs'));
+$('btn-refresh').addEventListener('click', () => withBusy($('btn-refresh'), 'Refreshing...', refresh));
+
+$('btn-setup-env').addEventListener('click', () => withBusy($('btn-setup-env'), 'Setting up...', async () => {
+  await api.setup();
+  await refresh();
+  banner('Python environment is ready.', 'ok');
+}));
+
+$('btn-save-db').addEventListener('click', () => withBusy($('btn-save-db'), 'Saving...', async () => {
+  const value = $('setup-db-url').value.trim();
+  if (!value) throw new Error('Enter a DATABASE_URL first.');
+  await api.saveEnv({ DATABASE_URL: value });
+  await refresh();
+  banner('Database URL saved. Run Initialize Schema when Postgres is ready.', 'ok');
+}));
+
+$('btn-test-db').addEventListener('click', () => withBusy($('btn-test-db'), 'Testing...', async () => {
+  const result = await api.testDatabase();
+  $('setup-db-status').textContent = result.detail ? `Connected: ${result.detail.replace(/\n/g, ' · ')}` : 'Connected.';
+  banner('Database connection succeeded.', 'ok');
+}));
+
+$('btn-init-db').addEventListener('click', () => withBusy($('btn-init-db'), 'Initializing...', async () => {
+  await api.initDatabase();
+  await refresh();
+  $('setup-db-status').textContent = 'Schema initialized.';
+  banner('Database schema is ready.', 'ok');
+}));
+
+$('btn-create-admin').addEventListener('click', () => withBusy($('btn-create-admin'), 'Creating...', async () => {
+  const payload = {
+    name: $('admin-name').value.trim(),
+    email: $('admin-email').value.trim(),
+    password: $('admin-password').value
+  };
+  if (!payload.email || !payload.password) throw new Error('Email and password are required.');
+  const result = $('admin-reset').checked
+    ? await api.resetPassword(payload)
+    : await api.createAdmin(payload);
+  $('setup-admin-status').textContent = result.detail || 'Administrator saved.';
+  $('admin-password').value = '';
+  banner($('admin-reset').checked ? 'Password updated.' : 'Administrator account created.', 'ok');
+}));
+
+$('btn-generate-jwt').addEventListener('click', () => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  $('set-jwt').value = hex;
+});
+
+$('btn-save-settings').addEventListener('click', () => withBusy($('btn-save-settings'), 'Saving...', async () => {
+  const port = Number($('set-port').value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be between 1024 and 65535.');
+  await api.saveSettings({
+    port,
+    host: $('set-host').value,
+    autoStart: $('set-autostart').checked,
+    autoRestart: $('set-autorestart').checked,
+    openOnStart: $('set-openonstart').checked
+  });
+  await refresh();
+  banner('Manager settings saved.', 'ok');
+}));
+
+$('btn-save-env').addEventListener('click', () => withBusy($('btn-save-env'), 'Saving...', async () => {
+  const updates = {
+    PORT: String(Number($('set-port').value) || 8000),
+    HOST: $('set-host').value,
+    ORGANIZATION_NAME: $('set-org').value.trim() || 'RealtimeSuite'
+  };
+  const jwt = $('set-jwt').value.trim();
+  if (jwt) updates.JWT_SECRET = jwt;
+  updates.OPSBOARD_TOKEN = $('set-board-token').value.trim();
+  await api.saveEnv(updates);
+  await refresh();
+  banner('Server configuration saved. Restart the server to apply port or binding changes.', 'ok');
+}));
+
+$('btn-refresh-users').addEventListener('click', () => withBusy($('btn-refresh-users'), 'Loading...', loadUsers));
+
+$('btn-generate-password').addEventListener('click', () => {
+  $('user-password').value = generatePassword();
+  $('user-password').focus();
+  $('user-password').select();
+});
+
+$('btn-create-user').addEventListener('click', () => withBusy($('btn-create-user'), 'Creating...', async () => {
+  const payload = {
+    name: $('user-name').value.trim(),
+    email: $('user-email').value.trim(),
+    role: $('user-role').value,
+    password: $('user-password').value
+  };
+  if (!payload.name) throw new Error('Enter the person\'s full name.');
+  if (!payload.email.includes('@')) throw new Error('Enter a valid email address.');
+  if (payload.password.length < 8) throw new Error('Password must be at least 8 characters.');
+  const result = await api.createUser(payload);
+  if (!result.ok) throw new Error(result.error);
+  state.users = result.users;
+  renderUsers();
+  $('user-name').value = '';
+  $('user-email').value = '';
+  $('user-password').value = '';
+  $('user-role').value = 'employee';
+  $('user-list-status').textContent = `Created ${payload.email.toLowerCase()}. Share the temporary password with them.`;
+  banner(`Account created for ${payload.email.toLowerCase()}.`, 'ok');
+}));
+
+$('btn-feature-save').addEventListener('click', () => withBusy($('btn-feature-save'), 'Saving...', async () => {
+  const patch = featureChanges();
+  if (Object.keys(patch).length === 0) {
+    banner('No feature changes to save.', 'ok');
+    return;
+  }
+  const result = await api.setFeatures(patch);
+  if (!result.ok) throw new Error(result.error);
+  state.features = result.flags;
+  state.featureDraft = { ...result.flags };
+  renderFeatures();
+  banner(`Saved ${Object.keys(patch).length} feature change${Object.keys(patch).length === 1 ? '' : 's'}. Reload RealtimeSuite to see them.`, 'ok');
+}));
+
+$('btn-feature-reset').addEventListener('click', () => {
+  if (!state.featureSchema) return;
+  state.featureDraft = { ...state.featureSchema.defaults };
+  renderFeatures();
+});
+
+$('btn-clear-logs').addEventListener('click', async () => {
+  await api.clearLogs();
+  $('log-view').textContent = '';
+  state.logs = [];
+});
+
+api.onLog((entry) => appendLog(entry));
+api.onStatus((status) => renderStatus(status));
+api.onLogsCleared(() => {
+  $('log-view').textContent = '';
+  state.logs = [];
+});
+
+window.setInterval(() => {
+  if (state.status) $('fact-uptime').textContent = formatUptime(state.status.startedAt);
+}, 1000);
+
+refresh().catch((error) => banner(error.message || String(error)));

@@ -1,0 +1,345 @@
+:root {
+  color-scheme: dark;
+  --ob-bg: #06122a;
+  --ob-panel: #0c1f3d;
+  --ob-panel-alt: #102a4f;
+  --ob-line: #1d3c68;
+  --ob-text: #e8f0ff;
+  --ob-muted: #8fa9cc;
+  --ob-accent: #ff8a1f;
+  --ob-green: #3ddc84;
+  --ob-red: #ff5964;
+  --ob-blue: #4c9bff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--ob-bg);
+  color: var(--ob-text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 22px;
+  background: linear-gradient(180deg, #0a2a55, #071a35);
+  border-bottom: 2px solid var(--ob-line);
+}
+
+.ob-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ob-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  background: var(--ob-accent);
+  color: #131313;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.ob-brand h1 {
+  margin: 0;
+  font-size: 1.45rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ob-brand p {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--ob-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ob-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.ob-announcement {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: #ffd9a8;
+  background: rgba(255, 138, 31, 0.12);
+  border: 1px solid rgba(255, 138, 31, 0.35);
+  padding: 5px 10px;
+  border-radius: 4px;
+}
+
+.ob-status {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.ob-status.online {
+  color: var(--ob-green);
+}
+
+.ob-status.syncing {
+  color: #ffd166;
+}
+
+.ob-status.error,
+.ob-status.offline {
+  color: var(--ob-red);
+}
+
+#ob-clock {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+#ob-fullscreen {
+  border: 1px solid var(--ob-line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ob-text);
+  border-radius: 5px;
+  padding: 6px 12px;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.ob-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 22px 18px;
+}
+
+.ob-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ob-kpis article {
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: grid;
+  gap: 4px;
+}
+
+.ob-kpis span {
+  font-size: 0.7rem;
+  color: var(--ob-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ob-kpis strong {
+  font-size: 2rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-columns {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr);
+  gap: 14px;
+}
+
+.ob-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ob-panel);
+  border: 1px solid var(--ob-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ob-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--ob-panel-alt);
+  border-bottom: 1px solid var(--ob-line);
+}
+
+.ob-panel h2 {
+  margin: 0;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ob-panel header span {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--ob-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+}
+
+.ob-list li {
+  border: 1px solid var(--ob-line);
+  border-left: 5px solid var(--ob-blue);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.ob-list li.shift {
+  border-left-color: var(--ob-green);
+}
+
+.ob-list li.task {
+  border-left-color: var(--ob-accent);
+}
+
+.ob-list li.critical {
+  border-left-color: var(--ob-red);
+  background: rgba(255, 89, 100, 0.08);
+}
+
+.ob-list li.stale {
+  border-left-color: #ffd166;
+}
+
+.ob-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ob-row strong {
+  font-size: 0.95rem;
+}
+
+.ob-when {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+  color: var(--ob-muted);
+  white-space: nowrap;
+}
+
+.ob-owner {
+  font-size: 0.8rem;
+  color: var(--ob-muted);
+}
+
+.ob-tag {
+  justify-self: start;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(76, 155, 255, 0.18);
+  color: #b9d6ff;
+}
+
+.ob-tag.warn {
+  background: rgba(255, 209, 102, 0.18);
+  color: #ffd166;
+}
+
+.ob-tag.danger {
+  background: rgba(255, 89, 100, 0.2);
+  color: #ff9aa2;
+}
+
+.ob-list-compact li {
+  padding: 6px 8px;
+}
+
+.ob-empty {
+  color: var(--ob-muted);
+  font-size: 0.85rem;
+  border: 1px dashed var(--ob-line);
+  border-radius: 6px;
+  padding: 14px;
+  text-align: center;
+}
+
+.ob-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 22px;
+  border-top: 1px solid var(--ob-line);
+  background: #050f22;
+  color: var(--ob-muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+body.flash-critical {
+  animation: ob-flash 0.6s ease-in-out 3;
+}
+
+@keyframes ob-flash {
+  0%, 100% { background: var(--ob-bg); }
+  50% { background: #3b0a14; }
+}
+
+@media (max-width: 1200px) {
+  .ob-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ob-columns {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+}

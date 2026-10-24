@@ -1,0 +1,1 @@
+/opt/homebrew/Cellar/postgresql@16/16.15_1/bin/postgres "-D" "/Users/carter/Documents/RealtimeSuite/backend/.pgdata-ref"

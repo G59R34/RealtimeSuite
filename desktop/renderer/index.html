@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RealtimeSuite Server Manager</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">RS</span>
+          <div>
+            <strong>RealtimeSuite</strong>
+            <small>Server Manager</small>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <button type="button" data-tab="overview" class="active">Overview</button>
+          <button type="button" data-tab="users">Users</button>
+          <button type="button" data-tab="features">Features</button>
+          <button type="button" data-tab="setup">Setup</button>
+          <button type="button" data-tab="settings">Settings</button>
+          <button type="button" data-tab="logs">Logs</button>
+        </nav>
+
+        <div class="sidebar-status">
+          <span id="side-dot" class="dot stopped"></span>
+          <div>
+            <strong id="side-state">Stopped</strong>
+            <small id="side-url">Not running</small>
+          </div>
+        </div>
+
+        <footer class="sidebar-footer">
+          <span id="app-version">v1.0.0</span>
+          <span>LAN server control</span>
+        </footer>
+      </aside>
+
+      <main class="content">
+        <div id="banner" class="banner hidden" role="status"></div>
+
+        <!-- Overview ------------------------------------------------------ -->
+        <section class="tab active" id="tab-overview">
+          <header class="page-head">
+            <div>
+              <h1>Server Overview</h1>
+              <p>Start, stop and monitor the scheduling server on this machine.</p>
+            </div>
+            <div class="status-pill stopped" id="status-pill">
+              <span class="dot stopped" id="status-dot"></span>
+              <span id="status-text">Stopped</span>
+            </div>
+          </header>
+
+          <div class="grid two">
+            <article class="card hero-card">
+              <div class="hero-top">
+                <div>
+                  <h2 id="hero-title">RealtimeSuite is stopped</h2>
+                  <p id="hero-subtitle">The LAN server is not running. Start it to let employees connect.</p>
+                </div>
+              </div>
+
+              <div class="hero-actions">
+                <button type="button" class="primary" id="btn-start">Start Server</button>
+                <button type="button" id="btn-stop" disabled>Stop</button>
+                <button type="button" id="btn-restart" disabled>Restart</button>
+              </div>
+
+              <dl class="facts">
+                <div><dt>Process ID</dt><dd id="fact-pid">—</dd></div>
+                <div><dt>Uptime</dt><dd id="fact-uptime">—</dd></div>
+                <div><dt>Port</dt><dd id="fact-port">8000</dd></div>
+                <div><dt>Auto restart</dt><dd id="fact-auto">On</dd></div>
+              </dl>
+            </article>
+
+            <article class="card">
+              <h2>Open in Browser</h2>
+              <p class="muted">These addresses use the server's LAN IP and work from other devices on the network.</p>
+              <div class="address-list" id="address-list"></div>
+              <div class="row-actions">
+                <button type="button" id="btn-open-app">Open App</button>
+                <button type="button" id="btn-open-board">Live Board</button>
+              </div>
+            </article>
+          </div>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Readiness</h2>
+              <button type="button" class="link" id="btn-refresh">Refresh</button>
+            </div>
+            <ul class="checklist" id="checklist"></ul>
+          </article>
+        </section>
+
+        <!-- Users --------------------------------------------------------- -->
+        <section class="tab" id="tab-users">
+          <header class="page-head">
+            <div>
+              <h1>People &amp; Access</h1>
+              <p>Create and remove accounts for this scheduling server. Changes apply immediately.</p>
+            </div>
+            <button type="button" class="link" id="btn-refresh-users">Refresh</button>
+          </header>
+
+          <article class="card">
+            <h2>Add account</h2>
+            <div class="grid four">
+              <label class="field">
+                <span>Full name</span>
+                <input id="user-name" type="text" autocomplete="off" placeholder="Jordan Smith" />
+              </label>
+              <label class="field">
+                <span>Email</span>
+                <input id="user-email" type="email" spellcheck="false" autocomplete="off" placeholder="jordan@example.com" />
+              </label>
+              <label class="field">
+                <span>Role</span>
+                <select id="user-role">
+                  <option value="employee">Employee</option>
+                  <option value="admin">Administrator</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Temporary password</span>
+                <div class="inline-input">
+                  <input id="user-password" type="text" minlength="8" spellcheck="false" autocomplete="off" placeholder="At least 8 characters" />
+                  <button type="button" id="btn-generate-password">Generate</button>
+                </div>
+              </label>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btn-create-user">Create Account</button>
+              <span class="hint">Share the password over a secure channel. The person can change it after signing in.</span>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Accounts</h2>
+              <span class="muted" id="user-count">—</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Onboarding</th>
+                    <th>Scheduled</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="user-table-body">
+                  <tr><td colspan="6" class="muted">Open this tab with the database running to load accounts.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint" id="user-list-status"></p>
+          </article>
+        </section>
+
+        <!-- Features ------------------------------------------------------ -->
+        <section class="tab" id="tab-features">
+          <header class="page-head">
+            <div>
+              <h1>Feature Toggles</h1>
+              <p>Turn parts of RealtimeSuite on or off. Changes apply the next time someone loads the app.</p>
+            </div>
+            <div class="hero-actions">
+              <button type="button" id="btn-feature-reset">Reset to Defaults</button>
+              <button type="button" class="primary" id="btn-feature-save">Save Changes</button>
+            </div>
+          </header>
+
+          <div id="feature-summary" class="banner hidden" role="status"></div>
+          <div id="feature-groups" class="feature-groups">
+            <p class="muted">Loading feature schema…</p>
+          </div>
+
+          <article class="card feature-note">
+            <h2>How this applies</h2>
+            <p class="muted">
+              Feature flags are stored with the organization. The web app hides the matching tabs, buttons and
+              sections; existing data is kept, so turning a feature back on restores it. The server does not need
+              to restart. The <code>/opsboard.html</code> kiosk hides disabled areas on its next refresh.
+            </p>
+          </article>
+        </section>
+
+        <!-- Setup --------------------------------------------------------- -->
+        <section class="tab" id="tab-setup">
+          <header class="page-head">
+            <div>
+              <h1>First-Run Setup</h1>
+              <p>Prepare Python, connect the database, and create the first administrator.</p>
+            </div>
+          </header>
+
+          <article class="card step">
+            <div class="step-head">
+              <span class="step-num">1</span>
+              <div>
+                <h2>Python environment</h2>
+                <p class="muted" id="setup-python-detail">Checking for Python 3.10+...</p>
+              </div>
+              <span class="step-badge" id="setup-env-badge">Check</span>
+            </div>
+            <p class="muted">Creates <code>backend/.venv</code> and installs the FastAPI dependencies from <code>requirements.txt</code>.</p>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btn-setup-env">Create / Repair Environment</button>
+              <button type="button" id="btn-open-backend">Open Backend Folder</button>
+            </div>
+          </article>
+
+          <article class="card step">
+            <div class="step-head">
+              <span class="step-num">2</span>
+              <div>
+                <h2>Database</h2>
+                <p class="muted">RealtimeSuite needs PostgreSQL reachable from this computer.</p>
+              </div>
+              <span class="step-badge" id="setup-db-badge">Check</span>
+            </div>
+            <label class="field">
+              <span>DATABASE_URL</span>
+              <input id="setup-db-url" type="text" spellcheck="false" placeholder="postgresql+psycopg://postgres@127.0.0.1:5432/suite" />
+            </label>
+            <div class="row-actions">
+              <button type="button" id="btn-test-db">Test Connection</button>
+              <button type="button" class="primary" id="btn-init-db">Initialize Schema</button>
+              <button type="button" id="btn-save-db">Save URL</button>
+            </div>
+            <p class="hint" id="setup-db-status"></p>
+          </article>
+
+          <article class="card step">
+            <div class="step-head">
+              <span class="step-num">3</span>
+              <div>
+                <h2>Administrator account</h2>
+                <p class="muted">The first account signs in to the scheduler and can create everyone else.</p>
+              </div>
+            </div>
+            <div class="grid two">
+              <label class="field">
+                <span>Full name</span>
+                <input id="admin-name" type="text" value="Administrator" />
+              </label>
+              <label class="field">
+                <span>Email</span>
+                <input id="admin-email" type="email" spellcheck="false" placeholder="admin@example.com" />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input id="admin-password" type="password" minlength="8" placeholder="At least 8 characters" />
+              </label>
+              <label class="field">
+                <span>Reset existing password instead</span>
+                <label class="inline-check"><input id="admin-reset" type="checkbox" /> Use reset-password</label>
+              </label>
+            </div>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btn-create-admin">Create Administrator</button>
+            </div>
+            <p class="hint" id="setup-admin-status"></p>
+          </article>
+        </section>
+
+        <!-- Settings ------------------------------------------------------ -->
+        <section class="tab" id="tab-settings">
+          <header class="page-head">
+            <div>
+              <h1>Settings</h1>
+              <p>Server binding, startup behaviour and secrets for this installation.</p>
+            </div>
+          </header>
+
+          <article class="card">
+            <h2>Network</h2>
+            <div class="grid two">
+              <label class="field">
+                <span>Port</span>
+                <input id="set-port" type="number" min="1024" max="65535" />
+              </label>
+              <label class="field">
+                <span>Bind host</span>
+                <select id="set-host">
+                  <option value="0.0.0.0">0.0.0.0 (LAN + this computer)</option>
+                  <option value="127.0.0.1">127.0.0.1 (this computer only)</option>
+                </select>
+              </label>
+            </div>
+            <label class="field">
+              <span>Organization name</span>
+              <input id="set-org" type="text" value="RealtimeSuite" />
+            </label>
+            <p class="hint">Changing the port requires a server restart.</p>
+          </article>
+
+          <article class="card">
+            <h2>Security</h2>
+            <label class="field">
+              <span>JWT signing secret</span>
+              <div class="inline-input">
+                <input id="set-jwt" type="text" spellcheck="false" placeholder="Generate a secret" />
+                <button type="button" id="btn-generate-jwt">Generate</button>
+              </div>
+            </label>
+            <label class="field">
+              <span>Live board token (optional)</span>
+              <input id="set-board-token" type="text" spellcheck="false" placeholder="Leave blank for open kiosk access" />
+            </label>
+            <p class="hint">The board token is added to the kiosk URL as <code>?token=...</code>.</p>
+          </article>
+
+          <article class="card">
+            <h2>Startup</h2>
+            <label class="inline-check"><input id="set-autostart" type="checkbox" /> Start the server when the manager opens</label>
+            <label class="inline-check"><input id="set-autorestart" type="checkbox" /> Restart automatically if the server crashes</label>
+            <label class="inline-check"><input id="set-openonstart" type="checkbox" /> Open the app in the browser once it is online</label>
+          </article>
+
+          <div class="row-actions">
+            <button type="button" class="primary" id="btn-save-settings">Save Settings</button>
+            <button type="button" id="btn-save-env">Save Server Config</button>
+          </div>
+        </section>
+
+        <!-- Logs ---------------------------------------------------------- -->
+        <section class="tab" id="tab-logs">
+          <header class="page-head">
+            <div>
+              <h1>Server Log</h1>
+              <p>Live output from uvicorn, the scheduler and setup commands.</p>
+            </div>
+          </header>
+          <div class="log-toolbar">
+            <label class="inline-check"><input id="log-follow" type="checkbox" checked /> Follow output</label>
+            <button type="button" id="btn-clear-logs">Clear</button>
+            <button type="button" id="btn-open-logs">Open Log Folder</button>
+          </div>
+          <pre class="log-view" id="log-view"></pre>
+        </section>
+      </main>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
