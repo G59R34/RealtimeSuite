@@ -9889,6 +9889,33 @@ textarea {
   min-width: 0;
 }
 
+.employee-restriction-banner,
+.employee-action-locked {
+  border: 1px solid rgba(225, 29, 72, 0.42);
+  border-radius: 10px;
+  background: rgba(255, 228, 230, 0.12);
+  color: #fecdd3;
+  padding: 12px 14px;
+  line-height: 1.5;
+}
+
+.employee-action-locked {
+  grid-column: 1 / -1;
+  margin: 0;
+}  .employee-portal-shell button[aria-disabled="true"] {
+  opacity: 0.48;
+  filter: grayscale(0.8);
+  cursor: not-allowed;
+}
+
+
+@media (max-width: 760px) {
+  .management-navigation,
+  .admin-ops-shell > .top-shell .top-controls > :not(.user-menu) {
+    display: none !important;
+  }
+}
+
 @media (max-width: 900px) {
   .employee-portal-shell {
     padding: 14px 12px calc(32px + env(safe-area-inset-bottom));

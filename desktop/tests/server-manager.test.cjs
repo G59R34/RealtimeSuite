@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 
 const {
   ServerManager,
@@ -142,6 +143,164 @@ test('setup waits for pip upgrade to succeed before installing dependencies', as
 
   await assert.rejects(manager.setupEnvironment(), /upgrade pip/i);
   assert.equal(commands.length, 1);
+});
+
+test('backup listing only exposes manager-created dump files and restore rejects unsafe requests', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  fs.mkdirSync(manager.backupDir, { recursive: true });
+  fs.writeFileSync(path.join(manager.backupDir, 'realtimesuite-2026-10-24T12-00-00-000Z.dump'), 'backup');
+  fs.writeFileSync(path.join(manager.backupDir, 'notes.txt'), 'not a backup');
+  assert.equal((await manager.listBackups()).length, 1);
+  await assert.rejects(manager.restoreBackup('../secrets.dump', true), /valid backup/);
+  await assert.rejects(manager.restoreBackup('realtimesuite-2026-10-24T12-00-00-000Z.dump', false), /explicit confirmation/);
+  manager.state = 'running';
+  await assert.rejects(manager.restoreBackup('realtimesuite-2026-10-24T12-00-00-000Z.dump', true), /Stop the application server/);
+});
+
+test('PostgreSQL client configuration keeps credentials out of command-line arguments', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  await manager.ensureEnvFile();
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://user%40name:p%40ss@db.example:5544/suite?sslmode=require' });
+  const config = manager.postgresClientConfig();
+  assert.equal(config.database, 'suite');
+  assert.deepEqual(config.env, {
+    PGHOST: 'db.example', PGPORT: '5544', PGDATABASE: 'suite',
+    PGUSER: 'user@name', PGPASSWORD: 'p@ss', PGSSLMODE: 'require'
+  });
+});
+
+test('local PostgreSQL auto-start only targets a local configured database', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const commands = [];
+  const manager = new ServerManager({
+    backendDir, userDataDir, platform: 'win32',
+    systemCommand: async (command, args) => {
+      commands.push([command, args]);
+      if (args[0] === 'query') return { code: 0, output: 'SERVICE_NAME: postgresql-x64-16\n' };
+      return { code: 0, output: '[SC] StartService SUCCESS' };
+    }
+  });
+  await manager.ensureEnvFile();
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://postgres@127.0.0.1:55432/suite' });
+  const result = await manager.startLocalPostgres();
+  assert.equal(result.started, true);
+  assert.deepEqual(commands[1], ['sc.exe', ['start', 'postgresql-x64-16']]);
+  commands.length = 0;
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://postgres@db.example:5432/suite' });
+  const remote = await manager.startLocalPostgres();
+  assert.equal(remote.attempted, false);
+  assert.equal(commands.length, 0);
+});
+
+test('embedded PostgreSQL configuration defaults to a persistent isolated data directory', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir, resourcesDir: '/app/resources' });
+  await manager.ensureEnvFile();
+  const config = manager.embeddedPostgresRuntimeConfig();
+  assert.deepEqual(config, { host: '127.0.0.1', port: 5432, database: 'suite' });
+  assert.equal(manager.embeddedPostgresDataDir(), path.join(userDataDir, 'postgres-data'));
+  assert.equal(manager.embeddedPostgresModulesPath(), path.join('/app/resources', 'postgres', 'node_modules'));
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://postgres@db.example:5432/suite' });
+  assert.throws(() => manager.embeddedPostgresRuntimeConfig(), /remote/);
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://admin@127.0.0.1:5432/suite' });
+  assert.throws(() => manager.embeddedPostgresRuntimeConfig(), /postgres user/);
+});
+
+test('embedded PostgreSQL initializes only a new data directory and preserves it on shutdown', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const dataDir = path.join(userDataDir, 'postgres-data');
+  const calls = [];
+  const manager = new ServerManager({
+    backendDir, userDataDir,
+    embeddedPostgresFactory: class FakePostgres {
+      constructor(options) { calls.push(['construct', options]); }
+      async initialise() { calls.push(['initialise']); fs.mkdirSync(dataDir, { recursive: true }); fs.writeFileSync(path.join(dataDir, 'PG_VERSION'), '16'); }
+      async start() { calls.push(['start']); }
+      async createDatabase(name) { calls.push(['createDatabase', name]); }
+      getPgClient() { return { connect: async () => {}, query: async () => ({ rowCount: 1 }), end: async () => {} }; }
+      async stop() { calls.push(['stop']); }
+    }
+  });
+  await manager.ensureEnvFile();
+  manager.embeddedDatabaseExists = async () => true;
+  const started = await manager.startEmbeddedPostgres();
+  assert.equal(started.started, true);
+  assert.ok(calls.some(([call]) => call === 'initialise'));
+  assert.ok(calls.some(([call]) => call === 'start'));
+  await manager.stopEmbeddedPostgres();
+  assert.ok(fs.existsSync(path.join(dataDir, 'PG_VERSION')));
+  calls.length = 0;
+  await manager.startEmbeddedPostgres();
+  assert.ok(!calls.some(([call]) => call === 'initialise'));
+});
+
+test('local PostgreSQL auto-start reports when no Windows service is installed', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir, platform: 'win32', systemCommand: async () => ({ code: 0, output: 'No services' }) });
+  await manager.ensureEnvFile();
+  const result = await manager.startLocalPostgres();
+  assert.equal(result.attempted, false);
+  assert.match(result.detail, /No installed PostgreSQL Windows service/);
+});
+
+test('database probe sends a real multiline Python script to the venv', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const venvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-venv-'));
+  const pythonPath = process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts', 'python.exe')
+    : path.join(venvDir, 'bin', 'python');
+  fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
+  fs.writeFileSync(pythonPath, '');
+  const manager = new ServerManager({ backendDir, userDataDir, venvDir });
+  await manager.ensureEnvFile();
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://postgres@127.0.0.1:5432/suite' });
+  manager.run = async (_command, args) => {
+    assert.ok(args[1].includes('\ntry:\n'));
+    assert.ok(!args[1].includes('\\ntry:'));
+    return { code: 0, output: 'CONNECTED:suite' };
+  };
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await manager.applyEnvValues({ DATABASE_URL: `postgresql+psycopg://postgres@127.0.0.1:${server.address().port}/suite` });
+  try {
+    const result = await manager.probeDatabase();
+    assert.equal(result.ok, true);
+    assert.match(result.detail, /Connected to database suite/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('database probe reports unreachable Postgres with actionable host and port', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  await manager.ensureEnvFile();
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql+psycopg://postgres@127.0.0.1:1/suite' });
+  const result = await manager.probeDatabase();
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /127\.0\.0\.1:1/);
+  assert.match(result.detail, /Start the PostgreSQL service/);
+});
+
+test('backup creation requires a valid PostgreSQL URL and database name', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  await manager.ensureEnvFile();
+  await manager.applyEnvValues({ DATABASE_URL: 'not-a-url' });
+  await assert.rejects(manager.createBackup(), /valid PostgreSQL URL/);
+  await manager.applyEnvValues({ DATABASE_URL: 'postgresql://localhost/' });
+  await assert.rejects(manager.createBackup(), /include a database name/);
 });
 
 test('check reports backend, env and frontend readiness', async () => {

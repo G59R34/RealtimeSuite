@@ -19,11 +19,16 @@ terminal:
 | Component | Version | Notes |
 | --- | --- | --- |
 | Python | 3.10+ | `python3` on macOS/Linux, `py`/`python` on Windows |
-| PostgreSQL | 13+ | running locally or reachable on the LAN |
+| PostgreSQL | 16 (bundled) | automatically managed for local installs; remote PostgreSQL also supported |
 | Node.js | 20+ | only needed to run or package the manager itself |
 
-The manager does **not** bundle Python or PostgreSQL. It detects Python and
-installs the backend's Python packages into `backend/.venv`. PostgreSQL installation and service startup remain OS-level prerequisites; the manager will not silently install system packages.
+The manager bundles PostgreSQL 16 server binaries for each supported installer
+(Windows x64, macOS x64/arm64, Linux x64/arm/arm64/ia32/ppc64). On first start,
+it initializes a persistent cluster in the OS user-data folder, creates the
+configured database if needed, and starts/stops PostgreSQL with RealtimeSuite.
+PostgreSQL data is kept separate from the installer and is never deleted by
+normal stop, uninstall, or update actions. Python is still detected separately;
+the backend's packages are installed into `backend/.venv`.
 
 ## Run from source
 
@@ -41,8 +46,8 @@ npm start
 
 On first launch the **Setup** tab prepares the Python environment and database:
 
-1. **Python environment** – creates `backend/.venv`, upgrades pip, installs dependencies, creates the configured PostgreSQL database when it is missing (using the URL's user credentials), and initializes the schema. Setup waits for every install process to finish before invoking the database CLI.
-2. **Database** – setup uses the configured `DATABASE_URL`. PostgreSQL must already be installed and running, and its configured user must be able to connect to the maintenance database and create databases. Use **Test Connection** to verify access; **Initialize Schema** can be rerun safely.
+1. **Python environment** – creates `backend/.venv`, upgrades pip, and installs dependencies. Setup waits for every install process to finish before invoking the database CLI.
+2. **Database** – local `DATABASE_URL` values use the bundled PostgreSQL instance, initialized automatically on first launch in the manager's user-data directory. It uses local trust authentication and binds only to loopback. The URL username must be `postgres`, with no password. If a local database is already listening at the configured port, it is used instead and is not managed/stopped by the app. Remote PostgreSQL URLs remain supported, but the remote database must already be running. Use **Test Connection** to verify access; **Initialize Schema** can be rerun safely.
 3. **Administrator account** – create the first admin after database setup. Additional accounts can then be added from the **Users** tab.
 
 Then return to **Overview** and press **Start Server**. The LAN addresses are
@@ -154,7 +159,7 @@ Notes:
 
 - Build each installer on its target OS where possible. Windows installers can
   be produced on macOS/Linux but require Wine; macOS installers require macOS.
-- The packaged app still expects Python and a running PostgreSQL server on the machine.
+- The packaged app still expects Python to be installed. PostgreSQL server binaries are bundled in the installer; remote PostgreSQL remains optional.
 - Code signing/notarization is not configured; macOS Gatekeeper will warn on
   unsigned builds.
 
@@ -191,8 +196,7 @@ interval or press its refresh button.
 **Port already in use** – another copy of the server is running. Stop it, or
 change the port in Settings and save the server config.
 
-**Database setup failed** – confirm Postgres is installed and running, and the URL uses
-the `postgresql+psycopg://` scheme with valid credentials. Creating a missing database requires permission to connect to the `postgres` maintenance database and `CREATE DATABASE`. The Setup log now includes the underlying failure detail.
+**Database setup failed** – for the bundled local database, use `postgresql+psycopg://postgres@127.0.0.1:5432/suite` with no password, and check whether another PostgreSQL service occupies that port. Bundled database files live under the OS user-data folder in `postgres-data`; they persist across manager upgrades and stops. Remote PostgreSQL still requires valid credentials and `CREATE DATABASE` permission for first-time initialization. Setup logs include the underlying failure detail.
 
 **The web app does not load** – run `npm run build` in `frontend/`. The manager's
 Readiness panel reports when `frontend/dist/index.html` is missing.

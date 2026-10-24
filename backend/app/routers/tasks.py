@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_organization
-from ..deps import RequestUser, get_current_user, get_db, require_admin, require_manager
+from ..deps import RequestUser, get_current_user, get_db, require_active_employee, require_admin, require_manager
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -157,6 +157,7 @@ def acknowledge(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     session.execute(
         text("select public.acknowledge_task_assignment(:id, :note)"),
         {"id": assignment_id, "note": str((payload or {}).get("note", ""))},
@@ -171,6 +172,7 @@ def acknowledge_by_assignment(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     session.execute(
         text("select public.acknowledge_task_assignment(:id, :note)"),
         {"id": assignment_id, "note": str((payload or {}).get("note", ""))},

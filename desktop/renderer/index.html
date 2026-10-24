@@ -84,7 +84,10 @@
             </article>
 
             <article class="card">
-              <h2>Open in Browser</h2>
+              <div class="card-head">
+                <div><h2>Open in Browser</h2><p class="muted">Local and LAN addresses for this server.</p></div>
+                <span class="access-badge" id="access-badge">Network</span>
+              </div>
               <p class="muted">These addresses use the server's LAN IP and work from other devices on the network.</p>
               <div class="address-list" id="address-list"></div>
               <div class="row-actions">
@@ -96,10 +99,20 @@
 
           <article class="card">
             <div class="card-head">
-              <h2>Readiness</h2>
-              <button type="button" class="link" id="btn-refresh">Refresh</button>
+              <div><h2>System diagnostics</h2><p class="muted">Configuration and health checks with suggested next steps.</p></div>
+              <button type="button" class="link" id="btn-refresh">Run checks</button>
             </div>
             <ul class="checklist" id="checklist"></ul>
+          </article>
+
+          <article class="card network-guidance">
+            <h2>Network access</h2>
+            <p id="network-summary">Use the local address on this computer or a LAN address on the same network.</p>
+            <ol>
+              <li><strong>Same network:</strong> share one of the LAN addresses above while the server is online.</li>
+              <li><strong>Internet access:</strong> configure router forwarding and the host firewall for this port. The manager cannot verify router rules or public reachability.</li>
+              <li><strong>Secure access:</strong> use a VPN or an HTTPS reverse proxy; do not expose the development server directly to the public internet.</li>
+            </ol>
           </article>
         </section>
 
@@ -229,7 +242,7 @@
               <span class="step-num">2</span>
               <div>
                 <h2>Database</h2>
-                <p class="muted">RealtimeSuite needs PostgreSQL reachable from this computer.</p>
+                <p class="muted">The manager starts a local PostgreSQL service when one is installed. Remote databases must already be running.</p>
               </div>
               <span class="step-badge" id="setup-db-badge">Check</span>
             </div>
@@ -243,6 +256,24 @@
               <button type="button" id="btn-save-db">Save URL</button>
             </div>
             <p class="hint" id="setup-db-status"></p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div><h2>Database backups</h2><p class="muted">Create a local PostgreSQL backup before maintenance or schema changes.</p></div>
+              <div class="backup-toolbar">
+                <button type="button" class="primary" id="btn-create-backup">Create backup</button>
+                <button type="button" id="btn-refresh-backups">Refresh</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Backup</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
+                <tbody id="backup-table-body"><tr><td colspan="4" class="muted">No backups loaded.</td></tr></tbody>
+              </table>
+            </div>
+            <p class="hint">Stored locally in the manager data folder. Restore replaces the current database and requires the server to be stopped.</p>
+            <p class="hint" id="backup-status" role="status"></p>
           </article>
 
           <article class="card step">
@@ -345,7 +376,7 @@
           </article>
 
           <article class="card">
-            <h2>Startup</h2>
+            <div class="card-head"><div><h2>Maintenance &amp; startup</h2><p class="muted">Control service availability and recovery behavior.</p></div><span class="step-badge" id="auto-restart-pill">Automatic recovery enabled</span></div>
             <label class="inline-check"><input id="set-autostart" type="checkbox" /> Start the server when the manager opens</label>
             <label class="inline-check"><input id="set-autorestart" type="checkbox" /> Restart automatically if the server crashes</label>
             <label class="inline-check"><input id="set-openonstart" type="checkbox" /> Open the app in the browser once it is online</label>

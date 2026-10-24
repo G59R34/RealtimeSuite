@@ -90,6 +90,60 @@ def require_admin(session: Session, user: RequestUser) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
 
 
+def require_active_employee(session: Session, user: RequestUser) -> None:
+    """Block employee-initiated actions during an active leave or restriction."""
+    if is_effective_admin(session, user):
+        return
+    action = session.execute(
+        text(
+            """
+            select title, leave_ends_on from public.discipline_actions
+            where employee_id = :id and status in ('issued', 'applied')
+              and punishment_type in ('unpaid_suspension', 'probation')
+              and (leave_starts_on is null or leave_ends_on is null
+                   or current_date between leave_starts_on and leave_ends_on)
+            order by created_at desc limit 1
+            """
+        ),
+        {"id": user.id},
+    ).mappings().first()
+    if action:
+        detail = "Your suspension or probation is active"
+        if action.get("title"):
+            detail += f" ({action['title']})"
+        if action.get("leave_ends_on"):
+            detail += f" through {action['leave_ends_on']}"
+        raise HTTPException(status_code=403, detail=f"{detail}. You cannot clock in, message management, or submit requests until management releases you.")
+    leave_code = session.execute(
+        text(
+            """
+            select exception_code::text from public.exception_requests
+            where employee_id = :id and status = 'approved'
+              and exception_code in ('VAUT', 'DO')
+              and current_date between start_date and end_date
+            order by created_at desc limit 1
+            """
+        ),
+        {"id": user.id},
+    ).scalar()
+    if leave_code:
+        leave = session.execute(
+            text(
+                "select title, end_date from public.exception_requests "
+                "where employee_id = :id and status = 'approved' "
+                "and exception_code = :code and current_date between start_date and end_date "
+                "order by created_at desc limit 1"
+            ),
+            {"id": user.id, "code": leave_code},
+        ).mappings().first()
+        detail = f"Your approved {leave_code} leave is active"
+        if leave and leave.get("title"):
+            detail += f" ({leave['title']})"
+        if leave and leave.get("end_date"):
+            detail += f" through {leave['end_date']}"
+        raise HTTPException(status_code=403, detail=f"{detail}. You cannot clock in, message management, or submit requests until the leave period ends.")
+
+
 def require_manager(session: Session, user: RequestUser) -> None:
     if is_effective_admin(session, user) or user.is_training_manager:
         return

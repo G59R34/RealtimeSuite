@@ -37,6 +37,7 @@ type TopBarProps = {
   onMarkAllNotificationsRead: () => void;
   onClearNotifications: () => void;
   showOrgSettings: boolean;
+  managementAccess?: boolean;
   enabledFeatures?: FeatureFlags;
   showRosterTab?: boolean;
   showEmployeePortalTab?: boolean;
@@ -82,6 +83,7 @@ export function TopBar({
   onMarkAllNotificationsRead,
   onClearNotifications,
   showOrgSettings,
+  managementAccess = false,
   enabledFeatures = DEFAULT_FEATURES,
   showRosterTab = true,
   showEmployeePortalTab = false,
@@ -123,8 +125,8 @@ export function TopBar({
           <span className="brand-rt">Scheduling Control</span>
         </div>
 
-        <div className="view-tabs">
-          {showEmployeePortalTab ? (
+        <div className="view-tabs management-navigation" aria-hidden={!managementAccess}>
+          {managementAccess && showEmployeePortalTab ? (
             <button
               type="button"
               className={activeView === 'employee-portal' ? 'active' : ''}
@@ -133,14 +135,16 @@ export function TopBar({
               Employee Portal
             </button>
           ) : null}
-          <button
-            type="button"
-            className={activeView === 'operations' ? 'active' : ''}
-            onClick={() => onViewChange('operations')}
-          >
-            Operations Board
-          </button>
-          {showRosterTab ? (
+          {managementAccess ? (
+            <button
+              type="button"
+              className={activeView === 'operations' ? 'active' : ''}
+              onClick={() => onViewChange('operations')}
+            >
+              Operations Board
+            </button>
+          ) : null}
+          {managementAccess && showRosterTab ? (
             <button
               type="button"
               className={activeView === 'roster' ? 'active' : ''}
@@ -149,7 +153,7 @@ export function TopBar({
               Roster
             </button>
           ) : null}
-          {showSchedulingTab ? (
+          {managementAccess && showSchedulingTab ? (
             <button
               type="button"
               className={activeView === 'scheduling' ? 'active' : ''}
@@ -158,7 +162,7 @@ export function TopBar({
               Scheduling
             </button>
           ) : null}
-          {showClockInAuditTab ? (
+          {managementAccess && showClockInAuditTab ? (
             <button
               type="button"
               className={activeView === 'shift-audit' ? 'active' : ''}
@@ -167,7 +171,7 @@ export function TopBar({
               Clock-In Audit
             </button>
           ) : null}
-          {showReportsTab ? (
+          {managementAccess && showReportsTab ? (
             <button
               type="button"
               className={activeView === 'reports' ? 'active' : ''}
@@ -176,7 +180,7 @@ export function TopBar({
               Reports
             </button>
           ) : null}
-          {showOrgSettings ? (
+          {managementAccess && showOrgSettings ? (
             <button
               type="button"
               className={activeView === 'settings' || activeView === 'opsboard-settings' ? 'active' : ''}
@@ -185,7 +189,7 @@ export function TopBar({
               Settings
             </button>
           ) : null}
-          {enabledFeatures.live_board !== false ? (
+          {managementAccess && enabledFeatures.live_board !== false ? (
             <button type="button" className="top-liveboard-link" onClick={onOpenLiveBoard}>
               Open Live Board
             </button>
@@ -290,7 +294,7 @@ export function TopBar({
               <button type="button" onClick={() => onQuickAction('refresh')}>Refresh Data</button>
             </div>
           </details>
-          {enabledFeatures.notifications !== false ? (
+          {managementAccess && enabledFeatures.notifications !== false ? (
           <div className="notifications-wrap">
             <button type="button" aria-label="Notifications" onClick={onToggleNotifications}>
               Notifications
@@ -324,10 +328,12 @@ export function TopBar({
             ) : null}
           </div>
           ) : null}
-          <button type="button" aria-label="Refresh board" onClick={() => void onRefresh()}>
-            {String.fromCharCode(8635)}
-          </button>
-          <button type="button" aria-label="Search" onClick={onSearch}>Search</button>
+          {managementAccess ? <>
+            <button type="button" aria-label="Refresh board" onClick={() => void onRefresh()}>
+              {String.fromCharCode(8635)}
+            </button>
+            <button type="button" aria-label="Search" onClick={onSearch}>Search</button>
+          </> : null}
           <details className="top-menu user-menu">
             <summary>{userDisplayName || 'User'}</summary>
             <div className="top-menu-panel user-menu-panel">
@@ -341,7 +347,7 @@ export function TopBar({
           </details>
         </div>
       </div>
-      {presence && enabledFeatures.shifts !== false ? (
+      {managementAccess && presence && enabledFeatures.shifts !== false ? (
         <div className="presence-strip">
           <span>Presence</span>
           <span className="presence-pill">On Duty {presence.onDuty}</span>

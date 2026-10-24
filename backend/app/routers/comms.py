@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..deps import RequestUser, get_current_user, get_db, is_effective_admin, require_admin
+from ..deps import RequestUser, get_current_user, get_db, is_effective_admin, require_active_employee, require_admin
 
 router = APIRouter(prefix="/api", tags=["comms"])
 
@@ -48,6 +48,8 @@ def send_message(
 ) -> dict:
     recipient_id = payload.get("recipient_id")
     message = str(payload.get("message", "")).strip()
+    if not is_effective_admin(session, user):
+        require_active_employee(session, user)
     if not recipient_id or not message:
         raise HTTPException(status_code=400, detail="Recipient and message are required.")
     message_id = session.execute(

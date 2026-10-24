@@ -7,6 +7,7 @@ const fsp = require('node:fs/promises');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const LOG_LIMIT = 800;
 const HEALTH_INTERVAL_MS = 2000;
@@ -125,6 +126,14 @@ class ServerManager extends EventEmitter {
     this.venvDir = options.venvDir || path.join(this.backendDir, '.venv');
     this.settingsFile = path.join(this.userDataDir, 'settings.json');
     this.logFile = path.join(this.userDataDir, 'logs', 'server.log');
+    this.backupDir = path.join(this.userDataDir, 'backups');
+    this.pgDumpPath = options.pgDumpPath || '';
+    this.platform = options.platform || process.platform;
+    this.arch = options.arch || process.arch;
+    this.resourcesDir = options.resourcesDir || (process.resourcesPath || '');
+    this.embeddedPostgresFactory = options.embeddedPostgresFactory || null;
+    this.embeddedPostgres = null;
+    this.systemCommand = options.systemCommand || this.runSystemCommand.bind(this);
     this.settings = this.readSettings();
     this.logs = [];
     this.child = null;
@@ -366,8 +375,10 @@ class ServerManager extends EventEmitter {
     const venvExists = fs.existsSync(this.venvPythonPath());
     const python = await this.detectPython();
     const env = this.readEnv();
+    const databaseProbe = await this.probeDatabase();
     return {
       backendDir: this.backendDir,
+      databaseProbe,
       lowPortsAllowed: process.platform === 'win32',
       backendExists: fs.existsSync(path.join(this.backendDir, 'app', 'main.py')),
       frontendBuilt: fs.existsSync(path.join(this.backendDir, '..', 'frontend', 'dist', 'index.html')),
@@ -385,7 +396,9 @@ class ServerManager extends EventEmitter {
         jwtSecretSet: Boolean(env.JWT_SECRET && env.JWT_SECRET !== 'change-me-before-deploying'),
         githubTokenSet: Boolean(env.GITHUB_TOKEN),
         githubRepos: env.GITHUB_REPOS || '',
-        githubPollMinutes: Number(env.GITHUB_POLL_MINUTES || 5)
+        githubPollMinutes: Number(env.GITHUB_POLL_MINUTES || 5),
+        hostBinding: (env.HOST || this.settings.host || '0.0.0.0') === '0.0.0.0' ? 'all network interfaces' : 'this computer only',
+        portValid: Number.isInteger(Number(env.PORT || this.settings.port || 8000)) && Number(env.PORT || this.settings.port || 8000) >= 1 && Number(env.PORT || this.settings.port || 8000) <= 65535
       }
     };
   }
@@ -571,22 +584,330 @@ class ServerManager extends EventEmitter {
     return flags;
   }
 
-  async testDatabase() {
-    if (!fs.existsSync(this.venvPythonPath())) throw new Error('Set up the Python environment first.');
+  async runSystemCommand(command, args) {
+    return new Promise((resolve) => {
+      const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { output += chunk.toString(); });
+      child.once('error', (error) => resolve({ code: -1, output: error.message }));
+      child.once('close', (code) => resolve({ code: code ?? -1, output }));
+    });
+  }
+
+  embeddedPostgresDataDir() {
+    return path.join(this.userDataDir, 'postgres-data');
+  }
+
+  embeddedPostgresModulesPath() {
+    if (this.resourcesDir) return path.join(this.resourcesDir, 'postgres', 'node_modules');
+    return path.resolve(__dirname, '..', 'node_modules');
+  }
+
+  async loadEmbeddedPostgres() {
+    if (this.embeddedPostgresFactory) return this.embeddedPostgresFactory;
+    const modulePath = path.join(this.embeddedPostgresModulesPath(), 'embedded-postgres', 'dist', 'index.js');
+    if (!fs.existsSync(modulePath)) throw new Error(`Bundled PostgreSQL runtime is missing (${modulePath}). Reinstall or repair the Server Manager.`);
+    const imported = await import(pathToFileURL(modulePath).href);
+    return imported.default;
+  }
+
+  embeddedPostgresRuntimeConfig(databaseUrl = this.readEnv().DATABASE_URL) {
+    let url;
+    try {
+      url = new URL(String(databaseUrl || '').replace(/^postgresql\+psycopg:/, 'postgresql:'));
+    } catch {
+      throw new Error('DATABASE_URL is invalid. Configure a PostgreSQL URL in Setup.');
+    }
+    const host = (url.hostname || '127.0.0.1').toLowerCase();
+    if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+      throw new Error(`Database host ${host} is remote; embedded PostgreSQL only manages a local database.`);
+    }
+    const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+    if (!database) throw new Error('DATABASE_URL must include a database name.');
+    if (url.username && decodeURIComponent(url.username) !== 'postgres') {
+      throw new Error('The embedded PostgreSQL database uses the postgres user. Update DATABASE_URL to use postgres or configure an external database.');
+    }
+    if (url.password) throw new Error('The embedded PostgreSQL database manages its own local credentials. Remove the password from DATABASE_URL or configure an external database.');
+    return { host, port: Number(url.port || 5432), database };
+  }
+
+  async startEmbeddedPostgres() {
+    const config = this.embeddedPostgresRuntimeConfig();
+    const reachable = await new Promise((resolve) => {
+      const socket = net.createConnection({ host: config.host, port: config.port });
+      const timer = setTimeout(() => socket.destroy(new Error('timeout')), 1200);
+      socket.once('connect', () => { clearTimeout(timer); socket.end(); resolve(true); });
+      socket.once('error', () => { clearTimeout(timer); resolve(false); });
+    });
+    if (reachable) return { started: false, external: true, detail: 'A PostgreSQL server is already listening at the configured local address.' };
+
+    const EmbeddedPostgres = await this.loadEmbeddedPostgres();
+    const pg = new EmbeddedPostgres({
+      databaseDir: this.embeddedPostgresDataDir(),
+      user: 'postgres',
+      password: '',
+      port: config.port,
+      authMethod: 'trust',
+      persistent: true,
+      postgresFlags: ['-h', config.host, '-c', 'listen_addresses=127.0.0.1,::1'],
+      onLog: (message) => this.log('system', `[PostgreSQL] ${String(message).trim()}`),
+      onError: (error) => this.log('stderr', `[PostgreSQL] ${String(error)}`)
+    });
+    await fsp.mkdir(this.userDataDir, { recursive: true });
+    if (!fs.existsSync(path.join(this.embeddedPostgresDataDir(), 'PG_VERSION'))) {
+      this.log('system', 'Initializing the bundled PostgreSQL database (first launch only)...');
+      await pg.initialise();
+    }
+    await pg.start();
+    this.embeddedPostgres = pg;
+    if (!(await this.embeddedDatabaseExists(config.database))) {
+      await pg.createDatabase(config.database);
+      this.log('system', `Created local database ${config.database}.`);
+    }
+    this.log('system', `Bundled PostgreSQL is ready on ${config.host}:${config.port}.`);
+    return { started: true, detail: `Started bundled PostgreSQL on ${config.host}:${config.port}.` };
+  }
+
+  async embeddedDatabaseExists(database) {
+    const client = this.embeddedPostgres.getPgClient('postgres', this.embeddedPostgresRuntimeConfig().host);
+    await client.connect();
+    try {
+      const result = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [database]);
+      return result.rowCount > 0;
+    } finally {
+      await client.end();
+    }
+  }
+
+  async startLocalPostgres() {
+    const rawUrl = this.readEnv().DATABASE_URL || '';
+    let target;
+    try {
+      target = new URL(rawUrl.replace(/^postgresql\\+psycopg:/, 'postgresql:'));
+    } catch {
+      return { attempted: false, detail: 'DATABASE_URL is missing or invalid; no PostgreSQL service was started.' };
+    }
+    const host = target.hostname.toLowerCase();
+    if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+      return { attempted: false, detail: `Database host ${target.hostname} is remote. The manager will not start services on another machine.` };
+    }
+
+    if (this.platform === 'win32') {
+      const query = await this.systemCommand('sc.exe', ['query', 'state=', 'all']);
+      if (query.code !== 0) return { attempted: true, detail: `Could not inspect Windows services: ${cliFailureMessage(query.output, 'service query failed')}` };
+      const services = [...query.output.matchAll(/SERVICE_NAME:\s*(postgresql[^\r\n\s]*)/gi)].map((match) => match[1]);
+      if (!services.length) return { attempted: false, detail: 'No installed PostgreSQL Windows service was found. Install PostgreSQL (including its service) or configure a remote database.' };
+      const preferred = services.sort((a, b) => {
+        const aVersion = Number((a.match(/-(\d+)$/) || [])[1] || 0);
+        const bVersion = Number((b.match(/-(\d+)$/) || [])[1] || 0);
+        return bVersion - aVersion;
+      });
+      for (const service of preferred) {
+        const started = await this.systemCommand('sc.exe', ['start', service]);
+        if (started.code === 0 || /already running|service has already been started/i.test(started.output)) {
+          this.log('system', `Started PostgreSQL Windows service ${service}.`);
+          return { attempted: true, started: true, detail: `Started PostgreSQL service ${service}.` };
+        }
+      }
+      return { attempted: true, detail: `Found PostgreSQL service ${preferred[0]}, but Windows could not start it. Check the service status and permissions.` };
+    }
+
+    if (this.platform === 'darwin') {
+      const listed = await this.systemCommand('brew', ['services', 'list']);
+      if (listed.code !== 0) return { attempted: false, detail: 'PostgreSQL was not started automatically: Homebrew services are unavailable. Start the installed PostgreSQL service manually.' };
+      const formula = listed.output.split(/\r?\n/).map((line) => line.trim().split(/\s+/)[0]).find((name) => /^postgresql(?:@.*)?$/.test(name));
+      if (!formula) return { attempted: false, detail: 'No Homebrew PostgreSQL service was found. Start the installed PostgreSQL service manually.' };
+      const started = await this.systemCommand('brew', ['services', 'start', formula]);
+      if (started.code === 0) {
+        this.log('system', `Started PostgreSQL with Homebrew (${formula}).`);
+        return { attempted: true, started: true, detail: `Started PostgreSQL service ${formula}.` };
+      }
+      return { attempted: true, detail: `Homebrew found ${formula} but could not start it: ${cliFailureMessage(started.output, 'service start failed')}` };
+    }
+
+    const active = await this.systemCommand('systemctl', ['is-active', 'postgresql']);
+    if (active.code === 0 && active.output.trim() === 'active') return { attempted: false, started: true, detail: 'PostgreSQL service is already active.' };
+    const started = await this.systemCommand('systemctl', ['start', 'postgresql']);
+    if (started.code === 0) {
+      this.log('system', 'Started PostgreSQL systemd service.');
+      return { attempted: true, started: true, detail: 'Started PostgreSQL system service.' };
+    }
+    return { attempted: true, detail: `Could not start PostgreSQL with systemd: ${cliFailureMessage(started.output, 'service is unavailable or requires operator permissions')}` };
+  }
+
+  async probeDatabase() {
+    if (!this.readEnv().DATABASE_URL) return { ok: false, detail: 'DATABASE_URL is not configured. Enter a PostgreSQL URL in Setup.' };
     const env = this.readEnv();
+    let target;
+    try {
+      target = new URL((env.DATABASE_URL || '').replace(/^postgresql\\+psycopg:/, 'postgresql:'));
+    } catch {
+      return { ok: false, detail: 'DATABASE_URL is missing or invalid. Enter a PostgreSQL URL in Setup.' };
+    }
+    const host = target.hostname || '127.0.0.1';
+    const port = Number(target.port || 5432);
+    const database = decodeURIComponent(target.pathname.replace(/^\//, ''));
+    if (!database) return { ok: false, detail: 'DATABASE_URL must include a database name.' };
+    const reachable = await new Promise((resolve) => {
+      const socket = net.createConnection({ host, port });
+      const timer = setTimeout(() => socket.destroy(new Error('timeout')), 2500);
+      socket.once('connect', () => { clearTimeout(timer); socket.end(); resolve(true); });
+      socket.once('error', (error) => { clearTimeout(timer); resolve({ error }); });
+    });
+    if (reachable !== true) {
+      const error = reachable.error;
+      const unavailable = error && ['ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(error.code);
+      return {
+        ok: false,
+        detail: unavailable
+          ? `Cannot reach PostgreSQL at ${host}:${port}. Start the PostgreSQL service and confirm that it listens on this address and port.`
+          : `Could not reach PostgreSQL at ${host}:${port}: ${error ? error.message : 'connection failed'}`
+      };
+    }
+    if (!fs.existsSync(this.venvPythonPath())) return { ok: false, detail: `PostgreSQL is reachable at ${host}:${port}, but the Python environment is not installed. Run Create / Repair Environment.` };
     const dsn = (env.DATABASE_URL || '').replace('+psycopg', '');
-    if (!dsn) throw new Error('DATABASE_URL is not configured.');
     const script = [
       'import psycopg, sys',
-      'conn = psycopg.connect(sys.argv[1], connect_timeout=5)',
-      'row = conn.execute("select current_database(), version()").fetchone()',
-      'print(row[0])',
-      'print(row[1].split(",")[0])',
-      'conn.close()'
+      'try:',
+      '    conn = psycopg.connect(sys.argv[1], connect_timeout=5)',
+      '    row = conn.execute("select current_database(), version()").fetchone()',
+      '    print("CONNECTED:" + row[0])',
+      '    conn.close()',
+      'except Exception as exc:',
+      '    print("DATABASE_ERROR:" + str(exc))',
+      '    raise SystemExit(2)'
     ].join('\n');
     const result = await this.run(this.venvPythonPath(), ['-c', script, dsn]);
-    if (result.code !== 0) throw new Error('Could not connect to Postgres. Check DATABASE_URL and that the server is running.');
-    return result.output.trim();
+    if (result.code !== 0) {
+      const detail = (result.output.match(/DATABASE_ERROR:(.*)/) || [])[1];
+      return { ok: false, detail: detail ? `PostgreSQL is reachable at ${host}:${port}, but authentication/database selection failed: ${detail}` : `PostgreSQL is reachable at ${host}:${port}, but the connection check failed: ${cliFailureMessage(result.output, 'check DATABASE_URL credentials and database permissions')}` };
+    }
+    const match = result.output.match(/CONNECTED:(.*)/);
+    return { ok: true, detail: `Connected to database ${match ? match[1].trim() : database} at ${host}:${port}.` };
+  }
+
+  async testDatabase() {
+    const result = await this.probeDatabase();
+    if (!result.ok) throw new Error(result.detail);
+    return result.detail;
+  }
+
+  // -------------------------------------------------------------- DB backups
+
+  async resolvePgDump() {
+    const candidates = this.pgDumpPath ? [this.pgDumpPath] : (process.platform === 'win32'
+      ? ['pg_dump.exe', 'pg_dump']
+      : ['pg_dump']);
+    for (const candidate of candidates) {
+      if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
+      if (!path.isAbsolute(candidate)) {
+        const result = await new Promise((resolve) => {
+          const child = spawn(candidate, ['--version'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+          let output = '';
+          child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+          child.once('error', () => resolve(null));
+          child.once('close', (code) => resolve(code === 0 && /pg_dump/i.test(output) ? candidate : null));
+        });
+        if (result) return result;
+      }
+    }
+    throw new Error('PostgreSQL pg_dump/pg_restore tools are not installed or not on PATH. Install PostgreSQL client tools, then retry.');
+  }
+
+  async listBackups() {
+    await fsp.mkdir(this.backupDir, { recursive: true });
+    const entries = await fsp.readdir(this.backupDir, { withFileTypes: true });
+    const files = await Promise.all(entries.filter((entry) => entry.isFile() && /^realtimesuite-.*\.dump$/.test(entry.name)).map(async (entry) => {
+      const fullPath = path.join(this.backupDir, entry.name);
+      const stat = await fsp.stat(fullPath);
+      return { name: entry.name, size: stat.size, createdAt: stat.mtime.toISOString() };
+    }));
+    return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  postgresClientConfig() {
+    let dsn;
+    try {
+      dsn = new URL((this.readEnv().DATABASE_URL || '').replace(/^postgresql\+psycopg:/, 'postgresql:'));
+    } catch {
+      throw new Error('DATABASE_URL is not configured with a valid PostgreSQL URL.');
+    }
+    const database = decodeURIComponent(dsn.pathname.replace(/^\//, ''));
+    if (!database) throw new Error('DATABASE_URL must include a database name.');
+    const env = {
+      PGHOST: dsn.hostname,
+      PGPORT: dsn.port || '5432',
+      ...(dsn.hostname.includes(':') ? { PGHOSTADDR: dsn.hostname } : {}),
+      PGDATABASE: database,
+      ...(dsn.username ? { PGUSER: decodeURIComponent(dsn.username) } : {}),
+      ...(dsn.password ? { PGPASSWORD: decodeURIComponent(dsn.password) } : {})
+    };
+    for (const key of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert']) {
+      if (dsn.searchParams.has(key)) env[`PG${key.toUpperCase()}`] = dsn.searchParams.get(key);
+    }
+    return { env, database };
+  }
+
+  async createBackup() {
+    const { env: postgresEnv, database } = this.postgresClientConfig();
+    const pgDump = await this.resolvePgDump();
+    await fsp.mkdir(this.backupDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const name = `realtimesuite-${timestamp}.dump`;
+    const output = path.join(this.backupDir, name);
+    this.log('system', `Creating database backup ${name}...`);
+    const result = await this.run(pgDump, ['--format=custom', '--no-owner', '--no-acl', '--file', output, '--dbname', database], { env: postgresEnv });
+    if (result.code !== 0) {
+      await fsp.rm(output, { force: true });
+      throw new Error(`Database backup failed. Verify the database is reachable and pg_dump is compatible. ${cliFailureMessage(result.output, '')}`.trim());
+    }
+    const stat = await fsp.stat(output);
+    if (stat.size === 0) {
+      await fsp.rm(output, { force: true });
+      throw new Error('pg_dump produced an empty backup file.');
+    }
+    this.log('system', `Database backup created (${name}, ${stat.size} bytes).`);
+    return { name, size: stat.size, createdAt: stat.mtime.toISOString() };
+  }
+
+  async restoreBackup(name, confirmed) {
+    if (confirmed !== true) throw new Error('Restore requires explicit confirmation.');
+    if (this.state === 'running' || this.child) throw new Error('Stop the application server before restoring a database backup.');
+    if (typeof name !== 'string' || !/^realtimesuite-[A-Za-z0-9T_.-]+\.dump$/.test(name) || path.basename(name) !== name) {
+      throw new Error('Choose a valid backup from the backup list.');
+    }
+    const backupPath = path.join(this.backupDir, name);
+    const stat = await fsp.stat(backupPath).catch(() => null);
+    if (!stat || !stat.isFile() || stat.size === 0) throw new Error('That backup does not exist or is empty.');
+    const listedBackups = await this.listBackups();
+    if (!listedBackups.some((backup) => backup.name === name)) throw new Error('Choose a valid backup from the backup list.');
+    const { env: postgresEnv, database } = this.postgresClientConfig();
+    const pgRestore = this.pgDumpPath
+      ? this.pgDumpPath.replace(/pg_dump(?:\.exe)?$/i, process.platform === 'win32' ? 'pg_restore.exe' : 'pg_restore')
+      : (process.platform === 'win32' ? 'pg_restore.exe' : 'pg_restore');
+    const executable = await this.resolvePgRestore(pgRestore);
+    this.log('system', `Restoring database from ${name}; current database contents will be replaced...`);
+    const result = await this.run(executable, ['--clean', '--if-exists', '--no-owner', '--no-acl', '--dbname', database, backupPath], { env: postgresEnv });
+    if (result.code !== 0) throw new Error(`Database restore failed. Existing data may be partially changed; review logs and restore from a verified backup if needed. ${cliFailureMessage(result.output, '')}`.trim());
+    this.log('system', `Database restored from ${name}.`);
+    return true;
+  }
+
+  async resolvePgRestore(candidate) {
+    if (path.isAbsolute(candidate)) {
+      if (fs.existsSync(candidate)) return candidate;
+      throw new Error('pg_restore was not found beside pg_dump. Install PostgreSQL client tools.');
+    }
+    const result = await new Promise((resolve) => {
+      const child = spawn(candidate, ['--version'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+      child.once('error', () => resolve(false));
+      child.once('close', (code) => resolve(code === 0 && /pg_restore/i.test(output)));
+    });
+    if (!result) throw new Error('PostgreSQL pg_restore is not installed or not on PATH.');
+    return candidate;
   }
 
   // ------------------------------------------------------------------ server
@@ -613,6 +934,27 @@ class ServerManager extends EventEmitter {
     this.lastError = null;
     this.emitStatus();
     this.log('system', `Starting RealtimeSuite on ${host}:${port}...`);
+    let databaseProbe = await this.probeDatabase();
+    if (!databaseProbe.ok && /ECONNREFUSED|ETIMEDOUT|Cannot reach PostgreSQL/i.test(databaseProbe.detail)) {
+      let service;
+      try {
+        service = await this.startEmbeddedPostgres();
+      } catch (error) {
+        databaseProbe.detail = `${databaseProbe.detail} Bundled PostgreSQL could not start: ${error.message}`;
+      }
+      if (service && service.started) {
+        databaseProbe = await this.probeDatabase();
+      }
+    }
+    if (!databaseProbe.ok) {
+      this.state = 'error';
+      this.lastError = databaseProbe.detail;
+      this.desiredRunning = false;
+      await this.stopEmbeddedPostgres();
+      this.emitStatus();
+      this.log('stderr', `Startup blocked: ${databaseProbe.detail}`);
+      throw new Error(databaseProbe.detail);
+    }
 
     const child = spawn(
       this.venvPythonPath(),
@@ -676,6 +1018,7 @@ class ServerManager extends EventEmitter {
     if (!child || child.pid == null) {
       this.state = 'stopped';
       this.stopHealthPolling();
+      await this.stopEmbeddedPostgres();
       this.emitStatus();
       return this.getStatus();
     }
@@ -713,8 +1056,21 @@ class ServerManager extends EventEmitter {
     this.startedAt = null;
     this.stopHealthPolling();
     this.state = 'stopped';
+    await this.stopEmbeddedPostgres();
     this.emitStatus();
     return this.getStatus();
+  }
+
+  async stopEmbeddedPostgres() {
+    const pg = this.embeddedPostgres;
+    this.embeddedPostgres = null;
+    if (!pg) return;
+    try {
+      await pg.stop();
+      this.log('system', 'Bundled PostgreSQL stopped cleanly.');
+    } catch (error) {
+      this.log('stderr', `Bundled PostgreSQL shutdown failed: ${error.message}`);
+    }
   }
 
   async restart() {

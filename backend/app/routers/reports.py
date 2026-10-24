@@ -395,6 +395,36 @@ def portal(
         ),
         {"id": user.id},
     ).mappings().all()
+    restriction_row = session.execute(
+        text(
+            """
+            select punishment_type::text as punishment_type, title, leave_starts_on, leave_ends_on
+            from public.discipline_actions
+            where employee_id = :id
+              and status in ('issued', 'applied')
+              and punishment_type in ('unpaid_suspension', 'probation')
+              and (leave_starts_on is null or leave_ends_on is null
+                   or current_date between leave_starts_on and leave_ends_on)
+            order by created_at desc limit 1
+            """
+        ),
+        {"id": user.id},
+    ).mappings().first()
+    if restriction_row is None:
+        restriction_row = session.execute(
+            text(
+                """
+                select exception_code::text as punishment_type, title, start_date as leave_starts_on,
+                       end_date as leave_ends_on
+                from public.exception_requests
+                where employee_id = :id and status = 'approved'
+                  and exception_code in ('VAUT', 'DO')
+                  and current_date between start_date and end_date
+                order by created_at desc limit 1
+                """
+            ),
+            {"id": user.id},
+        ).mappings().first()
 
     return {
         "profile": _serialize_profile(profile_row),
@@ -424,4 +454,10 @@ def portal(
         "timeOffRequests": [dict(row) for row in time_off],
         "exceptionRequests": [dict(row) for row in exceptions],
         "overtimeRequests": [dict(row) for row in overtime],
+        "restriction": ({
+            "kind": restriction_row["punishment_type"],
+            "title": restriction_row["title"] or restriction_row["punishment_type"],
+            "start_date": restriction_row["leave_starts_on"].isoformat() if restriction_row["leave_starts_on"] else None,
+            "end_date": restriction_row["leave_ends_on"].isoformat() if restriction_row["leave_ends_on"] else None,
+        } if restriction_row else None),
     }

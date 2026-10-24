@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_organization
-from ..deps import RequestUser, get_current_user, get_db, require_admin, require_manager
+from ..deps import RequestUser, get_current_user, get_db, require_active_employee, require_admin, require_manager
 from ..leave import LEAVE_EXCEPTION_CODES, wipe_employee_window
 
 router = APIRouter(prefix="/api", tags=["requests"])
@@ -35,6 +35,8 @@ def create_time_off(
     employee_id = payload.get("employee_id") or user.id
     if employee_id != user.id:
         require_admin(session, user)
+    else:
+        require_active_employee(session, user)
     start_date = str(payload.get("start_date") or payload.get("startDate") or "")
     end_date = str(payload.get("end_date") or payload.get("endDate") or "")
     if not start_date or not end_date:
@@ -162,6 +164,8 @@ def create_overtime(
     employee_id = payload.get("employee_id") or user.id
     if employee_id != user.id:
         require_admin(session, user)
+    else:
+        require_active_employee(session, user)
     org = get_organization(session)
     row = session.execute(
         text(
@@ -246,6 +250,7 @@ def create_swap(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     request_id = session.execute(
         text(
             """
@@ -268,6 +273,7 @@ def accept_swap(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     result = session.execute(
         text("select public.accept_shift_swap_request(:id, :note)"),
         {"id": request_id, "note": str((payload or {}).get("acceptance_note", ""))},
@@ -306,6 +312,8 @@ def create_exception(
     employee_id = payload.get("employee_id") or user.id
     if employee_id != user.id:
         require_admin(session, user)
+    else:
+        require_active_employee(session, user)
     org = get_organization(session)
     row = session.execute(
         text(

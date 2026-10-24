@@ -16,6 +16,7 @@ from ..deps import (
     is_effective_admin,
     require_admin,
     require_manager,
+    require_active_employee,
 )
 
 router = APIRouter(prefix="/api", tags=["shifts"])
@@ -619,6 +620,7 @@ def claim_shift(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     session.execute(text("select public.claim_shift_pool_shift(:id)"), {"id": shift_id})
     return {"ok": True}
 
@@ -630,6 +632,7 @@ def clock_in_own(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     location = payload or {}
     coords = (
         location.get("latitude") is not None and location.get("longitude") is not None
@@ -690,6 +693,7 @@ def clock_in_unscheduled(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    require_active_employee(session, user)
     location = payload or {}
     coords = location.get("latitude") is not None and location.get("longitude") is not None
     if location.get("isMobile") and coords:

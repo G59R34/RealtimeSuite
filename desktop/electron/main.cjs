@@ -14,6 +14,7 @@ const backendDir = app.isPackaged
 const manager = new ServerManager({
   backendDir,
   userDataDir: path.join(app.getPath('userData')),
+  resourcesDir: app.isPackaged ? process.resourcesPath : '',
   envFile: app.isPackaged
     ? path.join(app.getPath('userData'), '.env')
     : undefined,
@@ -32,7 +33,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 620,
     title: 'RealtimeSuite Server Manager',
-    backgroundColor: '#0a1424',
+    backgroundColor: '#f4f7fb',
     autoHideMenuBar: false,
     show: !smokeTest,
     webPreferences: {
@@ -185,9 +186,12 @@ function registerIpc() {
     return statePayload();
   });
   ipcMain.handle('manager:test-db', async () => {
-    const detail = await manager.testDatabase();
-    return { detail };
+    const result = await manager.probeDatabase();
+    return { ok: result.ok, detail: result.detail };
   });
+  ipcMain.handle('manager:list-backups', async () => ({ backups: await manager.listBackups() }));
+  ipcMain.handle('manager:create-backup', async () => manager.createBackup());
+  ipcMain.handle('manager:restore-backup', async (_event, payload) => manager.restoreBackup(payload && payload.name, Boolean(payload && payload.confirmed)));
   ipcMain.handle('manager:create-admin', async (_event, payload) => {
     const detail = await manager.createAdmin(payload || {});
     return { detail };

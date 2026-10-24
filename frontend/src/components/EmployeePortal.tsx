@@ -305,6 +305,13 @@ export function EmployeePortal({
   const showTraining = enabledFeatures.training;
   const showScheduling = enabledFeatures.shifts;
   const showClockButton = enabledFeatures.clock_in || enabledFeatures.unscheduled_clock_in;
+  const restricted = Boolean(data.restriction);
+  const restrictionReason = data.restriction
+    ? `${data.restriction.title || statusLabel(data.restriction.kind)} is active${data.restriction.end_date ? ` through ${data.restriction.end_date}` : ''}. You cannot clock in, message management, or submit requests until released.`
+    : '';
+  function explainRestriction() {
+    if (restricted) setError(restrictionReason);
+  }
 
   const ui = {
     operations_title: 'Home',
@@ -662,6 +669,7 @@ export function EmployeePortal({
   async function acknowledge(assignmentId: string) {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     try {
       await onAcknowledgeTask(assignmentId, ackNotes[assignmentId] ?? '');
@@ -680,6 +688,7 @@ export function EmployeePortal({
   async function clockIn(shiftId: string) {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     try {
       await onClockInShift(shiftId, currentClockInDeviceContext());
@@ -692,6 +701,7 @@ export function EmployeePortal({
   async function clockInUnscheduled() {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     try {
       await onClockInUnscheduledShift('Unscheduled overtime', currentClockInDeviceContext());
@@ -704,6 +714,7 @@ export function EmployeePortal({
   async function globalClockIn() {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     if (!isTodaySelected) {
       setError('Clock In is only available for today.');
@@ -741,6 +752,10 @@ export function EmployeePortal({
   }
 
   async function globalPunch() {
+    if (restricted && !hasOpenShift) {
+      explainRestriction();
+      return;
+    }
     if (hasOpenShift) {
       await globalClockOut();
       return;
@@ -752,6 +767,7 @@ export function EmployeePortal({
     event.preventDefault();
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     if (!dayShiftEnvelope) {
       setError('You must have a scheduled shift on this day to request same-day overtime.');
@@ -807,6 +823,7 @@ export function EmployeePortal({
   async function respondToAssignedOvertime(requestId: string, accept: boolean) {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
     try {
       await onRespondToAssignedOvertimeRequest({
         requestId,
@@ -835,6 +852,7 @@ export function EmployeePortal({
     event.preventDefault();
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     try {
       await onCreateTimeOffRequest({
@@ -854,6 +872,7 @@ export function EmployeePortal({
   async function previewCoverageImpact() {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
     setCoveragePreviewBusy(true);
     try {
       const rows = await onPreviewTimeOffCoverageImpact({
@@ -878,6 +897,7 @@ export function EmployeePortal({
     event.preventDefault();
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     try {
       await onCreateExceptionRequest({
@@ -918,6 +938,7 @@ export function EmployeePortal({
     event.preventDefault();
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     if (!messageRecipientId || !messageBody.trim()) {
       setError('Recipient and message are required.');
@@ -991,6 +1012,7 @@ export function EmployeePortal({
   async function claimShift(shiftId: string) {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     try {
       await onClaimShiftPool(shiftId);
@@ -1004,6 +1026,7 @@ export function EmployeePortal({
     event.preventDefault();
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
 
     if (!swapShiftId) {
       setError('Select a shift to post for swap.');
@@ -1027,6 +1050,7 @@ export function EmployeePortal({
   async function acceptSwapRequest(requestId: string) {
     setMessage(null);
     setError(null);
+    if (restricted) { explainRestriction(); return; }
     try {
       await onAcceptShiftSwapRequest(requestId, swapAcceptanceNotes[requestId] ?? '');
       setMessage('Swap request accepted and sent for admin approval.');
@@ -1078,7 +1102,7 @@ export function EmployeePortal({
             <input type="date" value={dateValue} onChange={(event) => onDateChange(event.target.value)} />
           </label>
           {showClockButton ? (
-            <button type="button" onClick={() => void globalPunch()} disabled={busy} title={isTodaySelected ? '' : 'Clock In/Out is only available for today.'}>
+            <button type="button" onClick={() => void globalPunch()} disabled={busy} aria-disabled={restricted && !hasOpenShift} onClickCapture={restricted && !hasOpenShift ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} title={restricted ? restrictionReason : (isTodaySelected ? '' : 'Clock In/Out is only available for today.')}>
               {hasOpenShift ? ui.clock_out_label : ui.clock_in_label}
             </button>
           ) : null}
@@ -1086,6 +1110,7 @@ export function EmployeePortal({
         </div>
       </header>
 
+      {restricted ? <div className="employee-restriction-banner" role="status">{restrictionReason}</div> : null}
       {navOpen ? (
         <button
           type="button"
@@ -1217,7 +1242,9 @@ export function EmployeePortal({
             className="employee-glance-punch"
             onClick={() => void globalPunch()}
             disabled={busy}
-            title={isTodaySelected ? '' : 'Clock In/Out is only available for today.'}
+            aria-disabled={restricted && !hasOpenShift}
+            onClickCapture={restricted && !hasOpenShift ? (event) => { event.preventDefault(); explainRestriction(); } : undefined}
+            title={restricted ? restrictionReason : (isTodaySelected ? '' : 'Clock In/Out is only available for today.')}
           >
             {hasOpenShift ? ui.clock_out_label : ui.clock_in_label}
           </button>
@@ -1392,7 +1419,7 @@ export function EmployeePortal({
                               }));
                             }}
                           />
-                          <button type="button" onClick={() => void acknowledge(assignment.id)} disabled={busy}>
+                          <button type="button" onClick={() => void acknowledge(assignment.id)} disabled={busy} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} title={restricted ? restrictionReason : undefined}>
                             Acknowledge
                           </button>
                         </div>
@@ -1434,6 +1461,9 @@ export function EmployeePortal({
                           type="button"
                           onClick={() => void claimShift(shift.id)}
                           disabled={busy || ownShift}
+                          aria-disabled={restricted}
+                          onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined}
+                          title={restricted ? restrictionReason : undefined}
                         >
                           {ownShift ? 'Already Assigned To You' : 'Pick Up Shift'}
                         </button>
@@ -1514,6 +1544,7 @@ export function EmployeePortal({
                   <details className="employee-inline-details">
                     <summary>Message leadership</summary>
                     <form className="employee-request-form" onSubmit={sendMessageToAdmin}>
+                      {restricted ? <p className="employee-action-locked">{restrictionReason}</p> : null}
                       <label>
                         Send To Leadership
                         <select value={messageRecipientId} onChange={(event) => setMessageRecipientId(event.target.value)} required>
@@ -1535,7 +1566,7 @@ export function EmployeePortal({
                           required
                         />
                       </label>
-                      <button type="submit" disabled={busy || !messageRecipientId || !messageBody.trim()}>
+                      <button type="submit" disabled={busy || !messageRecipientId || !messageBody.trim()} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} onClick={restricted ? explainRestriction : undefined} title={restricted ? restrictionReason : undefined}>
                         Send Message
                       </button>
                     </form>
@@ -1600,10 +1631,10 @@ export function EmployeePortal({
                     <span>Status: Pending your response</span>
                     {request.note?.trim() ? <span>Note: {request.note}</span> : null}
                     <div className="employee-task-ack-row">
-                      <button type="button" onClick={() => void respondToAssignedOvertime(request.id, true)} disabled={busy}>
+                      <button type="button" onClick={() => void respondToAssignedOvertime(request.id, true)} disabled={busy} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} title={restricted ? restrictionReason : undefined}>
                         Accept
                       </button>
-                      <button type="button" onClick={() => void respondToAssignedOvertime(request.id, false)} disabled={busy}>
+                      <button type="button" onClick={() => void respondToAssignedOvertime(request.id, false)} disabled={busy} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} title={restricted ? restrictionReason : undefined}>
                         Decline
                       </button>
                     </div>
@@ -1677,6 +1708,7 @@ export function EmployeePortal({
             )}
 
             <form className="employee-request-form" onSubmit={submitOvertimeRequest}>
+              {restricted ? <p className="employee-action-locked">{restrictionReason}</p> : null}
               <label>
                 Direction
                 <select
@@ -1704,7 +1736,7 @@ export function EmployeePortal({
                   placeholder="Optional"
                 />
               </label>
-              <button type="submit" disabled={busy || !dayShiftEnvelope}>Submit OT Request</button>
+              <button type="submit" disabled={busy || !dayShiftEnvelope} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} onClick={restricted ? explainRestriction : undefined} title={restricted ? restrictionReason : undefined}>Submit OT Request</button>
             </form>
 
             <h3>Recent Overtime Requests</h3>
@@ -1762,7 +1794,7 @@ export function EmployeePortal({
                   placeholder="Reason/context for the swap."
                 />
               </label>
-              <button type="submit" disabled={busy || employeeShiftOptions.length === 0}>Post Swap Request</button>
+              <button type="submit" disabled={busy || employeeShiftOptions.length === 0} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} onClick={restricted ? explainRestriction : undefined} title={restricted ? restrictionReason : undefined}>Post Swap Request</button>
             </form>
 
             <h3>Open Marketplace Requests</h3>
@@ -1794,7 +1826,7 @@ export function EmployeePortal({
                               }));
                             }}
                           />
-                          <button type="button" onClick={() => void acceptSwapRequest(request.id)} disabled={busy}>
+                          <button type="button" onClick={() => void acceptSwapRequest(request.id)} disabled={busy} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} title={restricted ? restrictionReason : undefined}>
                             Accept Swap
                           </button>
                         </div>
@@ -1838,8 +1870,8 @@ export function EmployeePortal({
           <details className="employee-request-section" open>
             <summary>{ui.submenu_timeoff}</summary>
           <article className="employee-card">
-            <h2>Request Time Off</h2>
-            <form className="employee-request-form" onSubmit={submitTimeOff}>
+            <h2>Request Time Off</h2>            <form className="employee-request-form" onSubmit={submitTimeOff}>
+              {restricted ? <p className="employee-action-locked">{restrictionReason}</p> : null}
               <label>
                 Start Date
                 <input type="date" value={requestStart} onChange={(event) => setRequestStart(event.target.value)} required />
@@ -1866,10 +1898,10 @@ export function EmployeePortal({
                   onChange={(event) => setRequestReason(event.target.value)}
                 />
               </label>
-              <button type="button" disabled={busy || coveragePreviewBusy} onClick={() => void previewCoverageImpact()}>
+              <button type="button" disabled={busy || coveragePreviewBusy} aria-disabled={restricted} onClick={restricted ? explainRestriction : () => void previewCoverageImpact()} title={restricted ? restrictionReason : undefined}>
                 {coveragePreviewBusy ? 'Previewing...' : 'Preview Coverage Impact'}
               </button>
-              <button type="submit" disabled={busy}>Submit Request</button>
+              <button type="submit" disabled={busy} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} onClick={restricted ? explainRestriction : undefined} title={restricted ? restrictionReason : undefined}>Submit Request</button>
             </form>
 
             <h3>Coverage Impact Preview</h3>
@@ -1917,6 +1949,7 @@ export function EmployeePortal({
           <article className="employee-card">
             <h2>Submit Exception Request</h2>
             <form className="employee-request-form" onSubmit={submitException}>
+              {restricted ? <p className="employee-action-locked">{restrictionReason}</p> : null}
               <label>
                 Type
                 <select value={exceptionType} onChange={(event) => setExceptionType(event.target.value as ExceptionRequestType)}>
@@ -1974,7 +2007,7 @@ export function EmployeePortal({
                   onChange={(event) => setExceptionDetails(event.target.value)}
                 />
               </label>
-              <button type="submit" disabled={busy}>Submit Exception</button>
+              <button type="submit" disabled={busy} aria-disabled={restricted} onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined} onClick={restricted ? explainRestriction : undefined} title={restricted ? restrictionReason : undefined}>Submit Exception</button>
             </form>
 
             <h3>Recent Exception Requests</h3>

@@ -553,4 +553,10 @@ export type EmployeePortalData = {
   timeOffRequests: TimeOffRequestRow[];
   exceptionRequests: ExceptionRequestRow[];
   overtimeRequests: OvertimeRequestRow[];
+  restriction?: {
+    kind: string;
+    title: string;
+    start_date: string | null;
+    end_date: string | null;
+  } | null;
 };

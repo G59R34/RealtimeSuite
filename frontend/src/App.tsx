@@ -134,6 +134,7 @@ export default function App() {
   const [dataBusy, setDataBusy] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ViewMode>('operations');
+  const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const activeViewRef = useRef<ViewMode>('operations');
   const [selectedDate, setSelectedDate] = useState(todayDateInputValue());
   const [timelineWindowHours, setTimelineWindowHours] = useState<2 | 4 | 8>(8);
@@ -150,6 +151,13 @@ export default function App() {
   const [messageRecipient, setMessageRecipient] = useState('');
   const [messageSubject, setMessageSubject] = useState('');
   const [messageBody, setMessageBody] = useState('');
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 760px)');
+    const updateViewport = () => setIsMobileViewport(media.matches);
+    media.addEventListener('change', updateViewport);
+    return () => media.removeEventListener('change', updateViewport);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -367,6 +375,10 @@ export default function App() {
 
   useEffect(() => {
     if (!isAdmin) return;
+    if (isMobileViewport && activeView !== 'employee-portal') {
+      setActiveView('employee-portal');
+      return;
+    }
     const allowed: Record<ViewMode, boolean> = {
       operations: true,
       roster: features.roster,
@@ -378,7 +390,7 @@ export default function App() {
       'employee-portal': features.employee_portal
     };
     if (!allowed[activeView]) setActiveView('operations');
-  }, [activeView, features, isAdmin, schedulingEnabled]);
+  }, [activeView, features, isAdmin, schedulingEnabled, isMobileViewport]);
 
   if (authLoading) {
     return (
@@ -492,6 +504,7 @@ export default function App() {
         onMarkAllNotificationsRead={() => setNotifications((current) => current.map((entry) => ({ ...entry, unread: false })))}
         onClearNotifications={() => setNotifications([])}
         showOrgSettings={isAdmin}
+        managementAccess={isAdmin}
         enabledFeatures={features}
         showRosterTab={isAdmin && features.roster}
         showEmployeePortalTab={isAdmin && features.employee_portal}

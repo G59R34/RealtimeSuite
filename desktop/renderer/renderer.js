@@ -96,6 +96,8 @@ function renderStatus(status) {
   $('status-text').textContent = label;
   $('side-state').textContent = label;
   $('side-url').textContent = status.state === 'running' ? status.url : 'Not running';
+  const accessBadge = $('access-badge');
+  if (accessBadge) accessBadge.textContent = state.check && state.check.config.host === '127.0.0.1' ? 'Local only' : 'LAN enabled';
 
   const heroTitle = $('hero-title');
   const heroSubtitle = $('hero-subtitle');
@@ -120,10 +122,14 @@ function renderStatus(status) {
   $('fact-uptime').textContent = formatUptime(status.startedAt);
   $('fact-port').textContent = String(status.port);
   $('fact-auto').textContent = status.autoRestart ? 'On' : 'Off';
+  $('auto-restart-pill').textContent = status.autoRestart ? 'Automatic recovery enabled' : 'Automatic recovery disabled';
+  $('auto-restart-pill').className = `step-badge ${status.autoRestart ? 'ok' : ''}`;
 
   $('btn-start').disabled = status.state === 'running' || status.state === 'starting' || status.state === 'stopping';
-  $('btn-stop').disabled = status.state === 'stopped' || status.state === 'error';
-  $('btn-restart').disabled = status.state === 'starting' || status.state === 'stopping';
+  $('btn-start').title = status.state === 'error' ? 'Try starting the server again.' : '';
+  $('btn-stop').disabled = status.state !== 'running' && status.state !== 'starting' && status.state !== 'stopping';
+  $('btn-restart').disabled = status.state !== 'running' && status.state !== 'error';
+  $('btn-restart').title = status.state === 'error' ? 'Start a fresh server process.' : 'Restart the running server.';
 
   const list = $('address-list');
   list.textContent = '';
@@ -176,9 +182,15 @@ function renderChecklist() {
     check.venvExists
       ? checkRow('ok', 'Virtual environment', '.venv is present.', 'Ready')
       : checkRow('warn', 'Virtual environment', 'Create it from the Setup tab.', 'Pending'),
-    check.config.databaseUrl
-      ? checkRow('ok', 'Database URL', check.config.databaseUrl, 'Configured')
-      : checkRow('bad', 'Database URL', 'Set DATABASE_URL in Settings.', 'Missing'),
+    check.databaseProbe && check.databaseProbe.ok
+      ? checkRow('ok', 'Database connection', check.databaseProbe.detail, 'Connected')
+      : checkRow(check.config.databaseUrl ? 'bad' : 'warn', 'Database connection', check.databaseProbe ? check.databaseProbe.detail : 'Database check has not run yet.', check.config.databaseUrl ? 'Unavailable' : 'Not set'),
+    check.config.portValid
+      ? checkRow('ok', 'Network binding', `Listening on ${check.config.host}:${port} (${check.config.hostBinding}).`, check.config.hostBinding)
+      : checkRow('bad', 'Network binding', 'The configured port is invalid. Choose a port from 1 to 65535.', 'Invalid'),
+    check.config.host === '127.0.0.1'
+      ? checkRow('warn', 'LAN access', 'Loopback binding prevents other devices from connecting. Change Bind host in Settings for LAN access.', 'Local only')
+      : checkRow('ok', 'LAN access', 'Server is configured to accept connections on network interfaces.', 'Enabled'),
     check.config.jwtSecretSet
       ? checkRow('ok', 'Session secret', 'JWT secret is customised.', 'Secure')
       : checkRow('warn', 'Session secret', 'Generate a secret in Settings before production use.', 'Default'),
@@ -205,6 +217,8 @@ function renderChecklist() {
     li.append(icon, text, status);
     list.appendChild(li);
   }
+
+  $('network-summary').textContent = `Current binding: ${check.config.host}:${port} (${check.config.hostBinding}). Router forwarding and firewall status cannot be verified from this computer.`;
 
   $('setup-python-detail').textContent = check.python
     ? `Python ${check.python.version} at ${check.python.path}`
@@ -292,9 +306,9 @@ function applyState(payload) {
   state.status = payload.status || state.status;
   state.check = payload.check || state.check;
   state.settings = payload.settings || state.settings;
+  if (state.status) renderStatus(state.status);
   state.version = payload.version || state.version;
   $('app-version').textContent = `v${state.version}`;
-  renderStatus(state.status);
   renderChecklist();
   renderSettings();
   if (payload.logs) renderLogs(payload.logs);
@@ -559,7 +573,7 @@ $('btn-start').addEventListener('click', () => withBusy($('btn-start'), 'Startin
 $('btn-stop').addEventListener('click', () => withBusy($('btn-stop'), 'Stopping...', async () => {
   await api.stop();
   await refresh();
-  banner('Server stopped.', 'ok');
+  banner('Server stopped. It will remain offline until you start it again.', 'ok');
 }));
 
 $('btn-restart').addEventListener('click', () => withBusy($('btn-restart'), 'Restarting...', async () => {
@@ -573,7 +587,58 @@ $('btn-open-app').addEventListener('click', () => api.open('app'));
 $('btn-open-board').addEventListener('click', () => api.open('board'));
 $('btn-open-backend').addEventListener('click', () => api.open('backend'));
 $('btn-open-logs').addEventListener('click', () => api.open('logs'));
-$('btn-refresh').addEventListener('click', () => withBusy($('btn-refresh'), 'Refreshing...', refresh));
+$('btn-refresh').addEventListener('click', () => withBusy($('btn-refresh'), 'Checking...', refresh));
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+async function loadBackups() {
+  const body = $('backup-table-body');
+  body.textContent = '';
+  const result = await api.listBackups();
+  if (!result.backups.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 4;
+    cell.className = 'muted';
+    cell.textContent = 'No backups yet. Create one before making database changes.';
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+  for (const backup of result.backups) {
+    const row = document.createElement('tr');
+    const name = document.createElement('td'); name.textContent = backup.name;
+    const size = document.createElement('td'); size.textContent = formatBytes(backup.size);
+    const created = document.createElement('td'); created.textContent = new Date(backup.createdAt).toLocaleString();
+    const actions = document.createElement('td'); actions.className = 'actions';
+    const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'small danger'; restore.textContent = 'Restore';
+    restore.disabled = Boolean(state.status && state.status.state === 'running');
+    restore.title = restore.disabled ? 'Stop the server before restoring a backup.' : 'Replace the current database with this backup.';
+    restore.addEventListener('click', () => void withBusy(restore, 'Restoring...', async () => {
+      const confirmed = window.confirm(`Restore ${backup.name}? This replaces current database contents. Stop the server first and ensure you have a recent backup.`);
+      if (!confirmed) return;
+      await api.restoreBackup({ name: backup.name, confirmed: true });
+      $('backup-status').textContent = `Restored ${backup.name}.`;
+      await refresh();
+      await loadBackups();
+    }));
+    actions.appendChild(restore);
+    row.append(name, size, created, actions);
+    body.appendChild(row);
+  }
+}
+
+$('btn-refresh-backups').addEventListener('click', () => withBusy($('btn-refresh-backups'), 'Loading...', loadBackups));
+$('btn-create-backup').addEventListener('click', () => withBusy($('btn-create-backup'), 'Creating...', async () => {
+  const backup = await api.createBackup();
+  $('backup-status').textContent = `Backup created: ${backup.name} (${formatBytes(backup.size)}).`;
+  await loadBackups();
+}));
 
 $('btn-setup-env').addEventListener('click', () => withBusy($('btn-setup-env'), 'Setting up...', async () => {
   await api.setup();
@@ -592,8 +657,8 @@ $('btn-save-db').addEventListener('click', () => withBusy($('btn-save-db'), 'Sav
 
 $('btn-test-db').addEventListener('click', () => withBusy($('btn-test-db'), 'Testing...', async () => {
   const result = await api.testDatabase();
-  $('setup-db-status').textContent = result.detail ? `Connected: ${result.detail.replace(/\n/g, ' · ')}` : 'Connected.';
-  banner('Database connection succeeded.', 'ok');
+  $('setup-db-status').textContent = result.detail || 'Database check complete.';
+  banner(result.detail || 'Database check complete.', result.ok ? 'ok' : 'error');
 }));
 
 $('btn-init-db').addEventListener('click', () => withBusy($('btn-init-db'), 'Initializing...', async () => {
@@ -765,4 +830,4 @@ window.setInterval(() => {
 }, 1000);
 
 trackUnsavedEdits();
-refresh().catch((error) => banner(error.message || String(error)));
+refresh().then(() => loadBackups()).catch((error) => banner(error.message || String(error)));
