@@ -228,6 +228,41 @@ function registerIpc() {
       return { ok: false, error: error.message };
     }
   });
+  ipcMain.handle('manager:db-tables', async () => {
+    try {
+      return { ok: true, tables: await manager.listDatabaseTables() };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('manager:db-rows', async (_event, payload) => {
+    try {
+      return { ok: true, table: await manager.readDatabaseRows(payload || {}) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('manager:db-update-row', async (_event, payload) => {
+    try {
+      return { ok: true, ...(await manager.updateDatabaseRow(payload || {})) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('manager:db-delete-row', async (_event, payload) => {
+    try {
+      return { ok: true, ...(await manager.deleteDatabaseRow(payload || {})) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('manager:db-reset', async (_event, payload) => {
+    try {
+      return { ok: true, ...(await manager.resetDatabase(payload || {})) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
   ipcMain.handle('manager:features', async () => {
     try {
       // Run the CLI commands one after another: both touch the schema on first use.

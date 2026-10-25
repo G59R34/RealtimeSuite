@@ -15,7 +15,8 @@ import type {
   EmployeePortalData,
   OrganizationLoginBranding,
   OrganizationSettings,
-  ProfileRow
+  ProfileRow,
+  TimelineZoomHours
 } from './types';
 import type { AdminRealtimeNotificationEvent } from './lib/api';
 import {
@@ -44,6 +45,7 @@ import {
   createOvertimeRequest,
   createShiftPoolForMonth,
   createShiftSwapRequest,
+  createTimeNullification,
   createTimeOffRequest,
   createWorkArea,
   deleteBoardNote,
@@ -51,6 +53,7 @@ import {
   deleteMonthShiftsAndReset,
   deleteShift,
   deleteTask,
+  deleteTimeNullification,
   deleteTimeOffRequestByAdmin,
   fetchActiveAnnouncement,
   fetchAdminDashboardData,
@@ -71,6 +74,7 @@ import {
   reviewExceptionRequest,
   reviewOvertimeRequest,
   reviewShiftSwapRequest,
+  reviewTimeNullification,
   reviewTimeOffRequest,
   sendOnboardingCredentialsEmail,
   setShiftPoolStatus,
@@ -137,7 +141,7 @@ export default function App() {
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const activeViewRef = useRef<ViewMode>('operations');
   const [selectedDate, setSelectedDate] = useState(todayDateInputValue());
-  const [timelineWindowHours, setTimelineWindowHours] = useState<2 | 4 | 8>(8);
+  const [timelineWindowHours, setTimelineWindowHours] = useState<TimelineZoomHours>(8);
   const [filters, setFilters] = useState<BoardFilters>({ resources: true, events: true, unassigned: true });
   const [features, setFeatures] = useState<FeatureFlags>(DEFAULT_FEATURES);
   const [shiftFilter, setShiftFilter] = useState('all');
@@ -428,6 +432,8 @@ export default function App() {
           onClockInUnscheduledShift={(note, location) => runMutation(() => clockInUnscheduledShift(note, location))}
           onClockOutShift={(shiftId) => runMutation(() => clockOutOwnShift(shiftId))}
           onCreateTimeOffRequest={(payload) => runMutation(() => createTimeOffRequest(payload))}
+          onCreateTimeNullification={(payload) => runMutation(() => createTimeNullification(payload))}
+          onDeleteTimeNullification={(requestId) => runMutation(() => deleteTimeNullification(requestId))}
           onCreateExceptionRequest={(payload) => runMutation(() => createExceptionRequest(payload))}
           onCreateOvertimeRequest={(payload) => runMutation(() => createOvertimeRequest(payload))}
           onRespondToAssignedOvertimeRequest={({ requestId, accept, note }) => runMutation(() => reviewOvertimeRequest({
@@ -544,6 +550,8 @@ export default function App() {
               onCreateShiftSwapRequest={(payload) => runMutation(async () => { await createShiftSwapRequest(payload); })}
               onAcceptShiftSwapRequest={(requestId, note) => runMutation(async () => { await acceptShiftSwapRequest(requestId, note); })}
               onPreviewTimeOffCoverageImpact={(payload) => previewTimeOffCoverageImpact(payload)}
+              onCreateTimeNullification={(payload) => runMutation(() => createTimeNullification(payload))}
+              onDeleteTimeNullification={(requestId) => runMutation(() => deleteTimeNullification(requestId))}
               onUpdateHelpfulInfo={(helpfulInfo) => runMutation(() => updateProfileHelpfulInfo(profile.id, helpfulInfo))}
               onSendMessage={(payload) => runMutation(() => createEmployeeMessage(payload))}
               onMarkMessageRead={(messageId) => runMutation(() => markEmployeeMessageRead(messageId))}
@@ -571,8 +579,12 @@ export default function App() {
               tasks={adminData.tasks}
               taskAssignments={adminData.taskAssignments}
               filters={filters}
+              onToggleFilter={(key) => setFilters((current) => ({ ...current, [key]: !current[key] }))}
+              shiftFilter={shiftFilter}
+              onShiftFilterChange={setShiftFilter}
               selectedDate={selectedDate}
               timelineWindowHours={timelineWindowHours}
+              onTimelineWindowChange={setTimelineWindowHours}
               defaultShiftBreakMinutes={settings?.default_shift_break_minutes ?? 30}
               features={features}
               nowDate={effectiveNow}
@@ -582,6 +594,10 @@ export default function App() {
               timeOffRequests={adminData.timeOffRequests ?? []}
               exceptionRequests={adminData.exceptionRequests ?? []}
               disciplineActions={adminData.disciplineActions ?? []}
+              timeNullifications={adminData.timeNullifications ?? []}
+              onCreateTimeNullification={(payload) => runMutation(() => createTimeNullification(payload))}
+              onReviewTimeNullification={(payload) => runMutation(() => reviewTimeNullification(payload))}
+              onDeleteTimeNullification={(requestId) => runMutation(() => deleteTimeNullification(requestId))}
               onCreateBoardNote={(payload) => runMutation(() => createBoardNote(payload))}
               onDeleteBoardNote={(noteId) => runMutation(() => deleteBoardNote(noteId))}
               onUpsertShift={(payload) => runMutation(() => upsertShift(payload))}

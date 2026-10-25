@@ -160,6 +160,30 @@ export type EmployeeTaskAssignment = TaskAssignmentRow & {
   task: TaskRow;
 };
 
+export type TimelineZoomHours = 1 | 2 | 4 | 8 | 12 | 24;
+
+export const TIMELINE_ZOOM_LEVELS: TimelineZoomHours[] = [1, 2, 4, 8, 12, 24];
+
+export type TimeNullificationStatus = 'pending' | 'approved' | 'denied' | 'cancelled';
+
+export type TimeNullificationRow = {
+  id: string;
+  employee_id: string;
+  shift_id: string | null;
+  start_at: string;
+  end_at: string;
+  reason: string;
+  status: TimeNullificationStatus;
+  requested_by: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string;
+  employee_name?: string | null;
+  reviewer_name?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type TimeOffRequestRow = {
   id: string;
   employee_id: string;
@@ -371,7 +395,7 @@ export type OrganizationSettings = {
   enable_extended_leave_lock: boolean;
   extended_leave_threshold_days: number;
   enable_admin_realtime_notifications: boolean;
-  default_timeline_window_hours: 2 | 4 | 8;
+  default_timeline_window_hours: TimelineZoomHours;
   default_shift_break_minutes: number;
   training_time_multiplier: number;
   training_fake_employee_count: number;
@@ -534,6 +558,7 @@ export type AdminDashboardData = {
   shiftIntelligence: ShiftIntelligenceSnapshot | null;
   disciplineActions: DisciplineActionRow[];
   boardNotes: BoardNoteRow[];
+  timeNullifications?: TimeNullificationRow[];
 };
 
 export type EmployeePortalData = {
@@ -553,6 +578,7 @@ export type EmployeePortalData = {
   timeOffRequests: TimeOffRequestRow[];
   exceptionRequests: ExceptionRequestRow[];
   overtimeRequests: OvertimeRequestRow[];
+  timeNullifications?: TimeNullificationRow[];
   restriction?: {
     kind: string;
     title: string;

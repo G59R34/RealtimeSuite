@@ -1,4 +1,4 @@
-import type { BoardFilters } from '../types';
+import type { BoardFilters, TimelineZoomHours } from '../types';
 import { DEFAULT_FEATURES } from '../lib/features';
 import type { FeatureFlags } from '../lib/features';
 import type { ViewMode } from '../lib/views';
@@ -18,8 +18,8 @@ type TopBarProps = {
   onViewChange: (view: ViewMode) => void;
   shiftFilter: string;
   onShiftFilterChange: (value: string) => void;
-  timelineWindowHours: 2 | 4 | 8;
-  onTimelineWindowChange: (value: 2 | 4 | 8) => void;
+  timelineWindowHours: TimelineZoomHours;
+  onTimelineWindowChange: (value: TimelineZoomHours) => void;
   filters: BoardFilters;
   onToggleFilter: (key: keyof BoardFilters) => void;
   selectedDate: string;
@@ -110,6 +110,8 @@ export function TopBar({
   }).format(now);
 
   const isBoardView = BOARD_VIEWS.includes(activeView);
+  // The operations board hosts its own employee/zoom/view controls in its command bar.
+  const showsBoardFilters = isBoardView && activeView !== 'operations';
   const connectivityLabel = connectivityState === 'offline'
     ? 'Offline'
     : connectivityState === 'syncing'
@@ -212,7 +214,7 @@ export function TopBar({
           </div>
         ) : null}
 
-        {isBoardView ? (
+        {showsBoardFilters ? (
           <>
             <select
               aria-label="Employee shift filter"
@@ -233,11 +235,14 @@ export function TopBar({
               <select
                 aria-label="Timeline window"
                 value={String(timelineWindowHours)}
-                onChange={(event) => onTimelineWindowChange(Number(event.target.value) as 2 | 4 | 8)}
+                onChange={(event) => onTimelineWindowChange(Number(event.target.value) as TimelineZoomHours)}
               >
+                <option value="1">1 Hour</option>
                 <option value="2">2 Hour</option>
                 <option value="4">4 Hour</option>
                 <option value="8">8 Hour</option>
+                <option value="12">12 Hour</option>
+                <option value="24">Full day</option>
               </select>
             </label>
 
@@ -275,6 +280,14 @@ export function TopBar({
         ) : null}
 
         <div className="top-actions">
+          {managementAccess && presence && enabledFeatures.shifts !== false && activeView === 'operations' ? (
+            <div className="presence-inline" aria-label="Presence" title="Presence right now">
+              <span className="presence-pill">On Duty {presence.onDuty}</span>
+              <span className="presence-pill">Break {presence.onBreak}</span>
+              <span className={`presence-pill${presence.late > 0 ? ' warn' : ''}`}>Late {presence.late}</span>
+              <span className="presence-pill">Off Shift {presence.offShift}</span>
+            </div>
+          ) : null}
           <span className={`connectivity-badge ${connectivityState}`} title="Realtime connectivity">
             <span className="dot" />
             {connectivityLabel}
@@ -347,7 +360,7 @@ export function TopBar({
           </details>
         </div>
       </div>
-      {managementAccess && presence && enabledFeatures.shifts !== false ? (
+      {managementAccess && presence && enabledFeatures.shifts !== false && activeView !== 'operations' ? (
         <div className="presence-strip">
           <span>Presence</span>
           <span className="presence-pill">On Duty {presence.onDuty}</span>

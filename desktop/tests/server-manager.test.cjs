@@ -14,7 +14,10 @@ const {
   pythonCandidates,
   versionAtLeast,
   parseTrailingJson,
-  cliFailureMessage
+  cliFailureMessage,
+  quoteIdent,
+  normalizeDatabaseValue,
+  formatDatabaseValue
 } = require('../electron/server-manager.cjs');
 
 function tempBackend() {
@@ -212,6 +215,23 @@ test('embedded PostgreSQL configuration defaults to a persistent isolated data d
   assert.throws(() => manager.embeddedPostgresRuntimeConfig(), /postgres user/);
 });
 
+test('running from source reads the bundled PostgreSQL runtime from the project', () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const original = process.resourcesPath;
+  // Electron sets this path even when the app is not packaged; it must not win.
+  Object.defineProperty(process, 'resourcesPath', {
+    value: path.join('/electron', 'dist', 'resources'),
+    configurable: true
+  });
+  try {
+    const manager = new ServerManager({ backendDir, userDataDir, resourcesDir: '' });
+    assert.equal(manager.embeddedPostgresModulesPath(), path.resolve(__dirname, '..', 'node_modules'));
+  } finally {
+    Object.defineProperty(process, 'resourcesPath', { value: original, configurable: true });
+  }
+});
+
 test('embedded PostgreSQL initializes only a new data directory and preserves it on shutdown', async () => {
   const backendDir = tempBackend();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
@@ -355,6 +375,30 @@ test('custom env file keeps packaged installs out of the read-only app bundle', 
   assert.equal(manager.readEnv().PORT, '8022');
   assert.equal(manager.readEnv().ORGANIZATION_NAME, 'Packaged');
   assert.equal(fs.existsSync(path.join(backendDir, '.env')), false);
+});
+
+test('database identifiers are quoted and values are normalised for PostgreSQL', () => {
+  assert.equal(quoteIdent('shifts'), '"shifts"');
+  assert.equal(quoteIdent('odd"name'), '"odd""name"');
+  assert.equal(normalizeDatabaseValue('NULL'), null);
+  assert.equal(normalizeDatabaseValue(null), null);
+  assert.equal(normalizeDatabaseValue('null'), 'null');
+  assert.equal(normalizeDatabaseValue('2026-10-24T08:30:00Z'), '2026-10-24T08:30:00Z');
+  assert.equal(formatDatabaseValue(null), null);
+  assert.equal(formatDatabaseValue({ a: 1 }), '{"a":1}');
+  assert.equal(formatDatabaseValue(12), '12');
+});
+
+test('database reset requires confirmation and a stopped server', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+
+  await assert.rejects(manager.resetDatabase({}), /explicit confirmation/);
+  manager.state = 'running';
+  await assert.rejects(manager.resetDatabase({ confirmed: true }), /Stop the application server/);
+  manager.state = 'stopped';
+  await assert.rejects(manager.resetDatabase({ confirmed: true }), /Python environment/);
 });
 
 test('packaged installs can place the virtual environment outside the app bundle', () => {

@@ -108,6 +108,44 @@ function parseTrailingJson(text) {
   return null;
 }
 
+function quoteIdent(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+// The manager shows plain text fields. A field holding NULL (upper case) is sent
+// to PostgreSQL as a real null; everything else is passed as text and cast by
+// PostgreSQL to the column type.
+function normalizeDatabaseValue(raw) {
+  if (raw === null || raw === undefined) return null;
+  const text = String(raw);
+  return text === 'NULL' ? null : text;
+}
+
+function formatDatabaseValue(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (Buffer.isBuffer(value)) return `\\x${value.toString('hex')}`;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function isConnectionError(error) {
+  const code = error && (error.code || (error.cause && error.cause.code));
+  return ['ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND'].includes(code);
+}
+
+function primaryKeyValues(info, key) {
+  const source = key && typeof key === 'object' ? key : {};
+  const values = {};
+  for (const column of info.primaryKey) {
+    if (source[column] === undefined) {
+      throw new Error(`Missing primary key value for ${column}. Reload the table and try again.`);
+    }
+    values[column] = normalizeDatabaseValue(source[column]);
+  }
+  return values;
+}
+
 function cliFailureMessage(output, fallback) {
   const lines = String(output)
     .split(/\r?\n/)
@@ -130,9 +168,12 @@ class ServerManager extends EventEmitter {
     this.pgDumpPath = options.pgDumpPath || '';
     this.platform = options.platform || process.platform;
     this.arch = options.arch || process.arch;
-    this.resourcesDir = options.resourcesDir || (process.resourcesPath || '');
+    // An empty string means "running from source": resolve bundled runtimes
+    // beside the project instead of Electron's own resources folder.
+    this.resourcesDir = options.resourcesDir !== undefined ? options.resourcesDir : (process.resourcesPath || '');
     this.embeddedPostgresFactory = options.embeddedPostgresFactory || null;
     this.embeddedPostgres = null;
+    this.pgModule = null;
     this.systemCommand = options.systemCommand || this.runSystemCommand.bind(this);
     this.settings = this.readSettings();
     this.logs = [];
@@ -910,6 +951,231 @@ class ServerManager extends EventEmitter {
     return candidate;
   }
 
+  // ------------------------------------------------------------ database tools
+
+  async loadPgModule() {
+    if (this.pgModule) return this.pgModule;
+    const modulePath = path.join(this.embeddedPostgresModulesPath(), 'pg');
+    if (!fs.existsSync(modulePath)) {
+      throw new Error(`Bundled PostgreSQL client is missing (${modulePath}). Reinstall or repair the Server Manager.`);
+    }
+    const pg = require(modulePath);
+    // Return temporal columns as PostgreSQL text so an edited row round-trips exactly.
+    for (const oid of [1082, 1114, 1184, 1186, 1187]) pg.types.setTypeParser(oid, (value) => value);
+    this.pgModule = pg;
+    return pg;
+  }
+
+  databaseConnectionString() {
+    const raw = (this.readEnv().DATABASE_URL || '').trim();
+    if (!raw) throw new Error('DATABASE_URL is not configured. Set it on the Setup tab first.');
+    return raw.replace(/^postgresql\+psycopg:/, 'postgresql:');
+  }
+
+  async withPgClient(work) {
+    const pg = await this.loadPgModule();
+    const client = new pg.Client({
+      connectionString: this.databaseConnectionString(),
+      connectionTimeoutMillis: 8000
+    });
+    await client.connect();
+    try {
+      return await work(client);
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  }
+
+  async queryDatabase(sql, params = []) {
+    return this.withPgClient((client) => client.query(sql, params));
+  }
+
+  async ensureDatabaseOnline() {
+    try {
+      await this.queryDatabase('select 1');
+      return true;
+    } catch (error) {
+      if (!isConnectionError(error)) throw new Error(`Could not reach the database: ${error.message}`);
+      this.log('system', 'Database is not answering. Starting the bundled PostgreSQL service...');
+      try {
+        await this.startEmbeddedPostgres();
+      } catch (inner) {
+        throw new Error(`Could not reach the database (${error.message}) and the bundled PostgreSQL service could not start: ${inner.message}`);
+      }
+      await this.queryDatabase('select 1');
+      return true;
+    }
+  }
+
+  async listDatabaseTables() {
+    await this.ensureDatabaseOnline();
+    const result = await this.queryDatabase(
+      `select c.relname as name
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relkind in ('r', 'p')
+        order by c.relname`
+    );
+    const names = result.rows.map((row) => row.name);
+    const tables = await Promise.all(names.map(async (name) => {
+      try {
+        const counted = await this.queryDatabase(`select count(*)::bigint as total from public.${quoteIdent(name)}`);
+        return { name, rows: Number(counted.rows[0].total) };
+      } catch {
+        return { name, rows: null };
+      }
+    }));
+    return tables;
+  }
+
+  async describeDatabaseTable(table) {
+    const name = String(table || '').trim();
+    if (!name) throw new Error('Choose a table first.');
+    const reference = `public.${quoteIdent(name)}`;
+    const columns = await this.queryDatabase(
+      `select a.attname as name,
+              format_type(a.atttypid, a.atttypmod) as type,
+              a.attnotnull as required
+         from pg_attribute a
+        where a.attrelid = to_regclass($1) and a.attnum > 0 and not a.attisdropped
+        order by a.attnum`,
+      [reference]
+    );
+    if (columns.rowCount === 0) throw new Error(`Table "${name}" does not exist in the public schema.`);
+    const primary = await this.queryDatabase(
+      `select a.attname as name
+         from pg_index i
+         join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+        where i.indrelid = to_regclass($1) and i.indisprimary
+        order by array_position(i.indkey::int2[], a.attnum)`,
+      [reference]
+    );
+    return {
+      name,
+      columns: columns.rows.map((row) => ({ name: row.name, type: row.type, required: Boolean(row.required) })),
+      primaryKey: primary.rows.map((row) => row.name)
+    };
+  }
+
+  async readDatabaseRows({ table, limit, offset } = {}) {
+    const info = await this.describeDatabaseTable(table);
+    const size = Math.min(Math.max(Number(limit) || 25, 1), 200);
+    const start = Math.max(Number(offset) || 0, 0);
+    const order = (info.primaryKey.length ? info.primaryKey : info.columns.map((column) => column.name))
+      .map(quoteIdent)
+      .join(', ');
+    const counted = await this.queryDatabase(`select count(*)::bigint as total from public.${quoteIdent(info.name)}`);
+    const result = await this.queryDatabase(
+      `select * from public.${quoteIdent(info.name)} order by ${order} limit $1 offset $2`,
+      [size, start]
+    );
+    return {
+      ...info,
+      total: Number(counted.rows[0].total),
+      limit: size,
+      offset: start,
+      rows: result.rows.map((row) => {
+        const cells = {};
+        for (const column of info.columns) cells[column.name] = formatDatabaseValue(row[column.name]);
+        return cells;
+      })
+    };
+  }
+
+  async updateDatabaseRow({ table, key, changes } = {}) {
+    const info = await this.describeDatabaseTable(table);
+    if (!info.primaryKey.length) {
+      throw new Error(`Table "${info.name}" has no primary key, so rows cannot be edited safely from the manager.`);
+    }
+    const entries = Object.entries(changes || {});
+    if (entries.length === 0) throw new Error('Change at least one value before saving.');
+    const known = new Set(info.columns.map((column) => column.name));
+    const params = [];
+    const assignments = [];
+    for (const [column, raw] of entries) {
+      if (!known.has(column)) throw new Error(`Column "${column}" does not exist on ${info.name}.`);
+      params.push(normalizeDatabaseValue(raw));
+      assignments.push(`${quoteIdent(column)} = $${params.length}`);
+    }
+    const values = primaryKeyValues(info, key);
+    const where = info.primaryKey.map((column) => {
+      params.push(values[column]);
+      return `${quoteIdent(column)} = $${params.length}`;
+    });
+    const result = await this.queryDatabase(
+      `update public.${quoteIdent(info.name)} set ${assignments.join(', ')} where ${where.join(' and ')} returning *`,
+      params
+    );
+    if (result.rowCount === 0) throw new Error('No row matched that primary key. Reload the table and try again.');
+    this.log('system', `Updated a row in public.${info.name}.`);
+    const row = {};
+    for (const column of info.columns) row[column.name] = formatDatabaseValue(result.rows[0][column.name]);
+    return { row, message: `Saved ${entries.length} column${entries.length === 1 ? '' : 's'} in ${info.name}.` };
+  }
+
+  async deleteDatabaseRow({ table, key } = {}) {
+    const info = await this.describeDatabaseTable(table);
+    if (!info.primaryKey.length) {
+      throw new Error(`Table "${info.name}" has no primary key, so rows cannot be deleted safely from the manager.`);
+    }
+    const values = primaryKeyValues(info, key);
+    const params = [];
+    const where = info.primaryKey.map((column) => {
+      params.push(values[column]);
+      return `${quoteIdent(column)} = $${params.length}`;
+    });
+    const result = await this.queryDatabase(
+      `delete from public.${quoteIdent(info.name)} where ${where.join(' and ')}`,
+      params
+    );
+    if (result.rowCount === 0) throw new Error('No row matched that primary key. Reload the table and try again.');
+    this.log('system', `Deleted a row from public.${info.name}.`);
+    return { message: `Deleted 1 row from ${info.name}.` };
+  }
+
+  async resetDatabase({ confirmed } = {}) {
+    if (confirmed !== true) throw new Error('Resetting the database requires explicit confirmation.');
+    if (this.child || this.state === 'running' || this.state === 'starting') {
+      throw new Error('Stop the application server before resetting the database.');
+    }
+    if (!fs.existsSync(this.venvPythonPath())) {
+      throw new Error('Create the Python environment first; the reset reapplies the schema with the backend CLI.');
+    }
+    await this.ensureDatabaseOnline();
+    const { database } = this.postgresClientConfig();
+    let backupNote = '';
+    try {
+      const backup = await this.createBackup();
+      backupNote = `A safety backup was saved as ${backup.name}.`;
+    } catch (error) {
+      backupNote = `No safety backup was created: ${error.message}`;
+      this.log('stderr', `Safety backup before reset failed: ${error.message}`);
+    }
+
+    this.log('system', `Resetting database ${database}: clearing the public schema...`);
+    await this.withPgClient(async (client) => {
+      await client.query('begin');
+      try {
+        await client.query('drop schema if exists public cascade');
+        await client.query('create schema public');
+        await client.query('grant usage, create on schema public to public');
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback').catch(() => undefined);
+        throw error;
+      }
+    });
+
+    this.log('system', 'Schema cleared. Rebuilding tables, organization and work areas...');
+    try {
+      await this.initDatabase();
+    } catch (error) {
+      throw new Error(`Database was cleared but the schema could not be rebuilt: ${error.message} ${backupNote}`.trim());
+    }
+    this.log('system', 'Database reset complete.');
+    return { database, backupNote, message: `Database ${database} was reset. ${backupNote}`.trim() };
+  }
+
   // ------------------------------------------------------------------ server
 
   async start() {
@@ -1182,5 +1448,9 @@ module.exports = {
   pythonCandidates,
   versionAtLeast,
   parseTrailingJson,
-  cliFailureMessage
+  cliFailureMessage,
+  quoteIdent,
+  normalizeDatabaseValue,
+  formatDatabaseValue,
+  isConnectionError
 };

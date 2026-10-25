@@ -18,12 +18,15 @@ import type {
   TaskPriority,
   TaskRow,
   TaskStatus,
+  TimeNullificationRow,
   TimeOffCoverageImpactRow,
   TimeOffRequestRow,
+  TimelineZoomHours,
   TrainingAssignmentRow,
   TrainingCourseRow,
   ShiftSwapRequestRow
 } from '../types';
+import { TIMELINE_ZOOM_LEVELS } from '../types';
 import { normalizeFeatureFlags } from './features';
 import type { FeatureFlags } from './features';
 
@@ -37,6 +40,7 @@ const REALTIME_TABLES = new Set([
   'tasks',
   'task_assignments',
   'time_off_requests',
+  'time_nullification_requests',
   'exception_requests',
   'overtime_requests',
   'shift_swap_requests',
@@ -378,9 +382,10 @@ function normalizeBoundedInt(value: unknown, fallback: number, min: number, max:
   return Math.min(max, Math.max(min, Math.floor(numeric)));
 }
 
-function normalizeTimelineWindowHours(value: unknown): 2 | 4 | 8 {
+function normalizeTimelineWindowHours(value: unknown): TimelineZoomHours {
   const numeric = Number(value);
-  return numeric === 2 || numeric === 4 || numeric === 8 ? numeric : 8;
+  const match = TIMELINE_ZOOM_LEVELS.find((level) => level === numeric);
+  return match ?? 8;
 }
 
 function normalizeExperienceModule(value: unknown, fallbackId: string): ExperienceModule | null {
@@ -554,7 +559,7 @@ export async function updateCurrentOrganizationSettings(payload: {
   enableExtendedLeaveLock: boolean;
   extendedLeaveThresholdDays: number;
   enableAdminRealtimeNotifications: boolean;
-  defaultTimelineWindowHours: 2 | 4 | 8;
+  defaultTimelineWindowHours: TimelineZoomHours;
   defaultShiftBreakMinutes: number;
 }): Promise<OrganizationSettings> {
   const row = await apiFetch<Record<string, unknown>>('/settings', {
@@ -715,7 +720,8 @@ export async function fetchAdminDashboardData(selectedDate: string): Promise<Adm
   return {
     ...data,
     shifts: (data.shifts ?? []).map(normalizeShiftPay),
-    monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay)
+    monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay),
+    timeNullifications: data.timeNullifications ?? []
   };
 }
 
@@ -725,7 +731,8 @@ export async function fetchEmployeePortalData(userId: string, selectedDate: stri
     ...data,
     shifts: (data.shifts ?? []).map(normalizeShiftPay),
     monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay),
-    shiftPoolShifts: (data.shiftPoolShifts ?? []).map(normalizeShiftPay)
+    shiftPoolShifts: (data.shiftPoolShifts ?? []).map(normalizeShiftPay),
+    timeNullifications: data.timeNullifications ?? []
   };
 }
 
@@ -1142,6 +1149,42 @@ export async function createNoteTaskForEmployee(payload: {
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
+
+export async function createTimeNullification(payload: {
+  employeeId: string;
+  shiftId: string;
+  startAt: string;
+  endAt: string;
+  reason: string;
+  approved?: boolean;
+}): Promise<TimeNullificationRow> {
+  return apiFetch<TimeNullificationRow>('/nullifications', {
+    method: 'POST',
+    body: jsonBody({
+      employee_id: payload.employeeId,
+      shift_id: payload.shiftId,
+      start_at: payload.startAt,
+      end_at: payload.endAt,
+      reason: payload.reason,
+      approved: Boolean(payload.approved)
+    })
+  });
+}
+
+export async function reviewTimeNullification(payload: {
+  requestId: string;
+  status: 'approved' | 'denied' | 'cancelled';
+  reviewNote?: string;
+}): Promise<TimeNullificationRow> {
+  return apiFetch<TimeNullificationRow>(`/nullifications/${payload.requestId}`, {
+    method: 'PATCH',
+    body: jsonBody({ status: payload.status, review_note: payload.reviewNote ?? '' })
+  });
+}
+
+export async function deleteTimeNullification(requestId: string): Promise<void> {
+  await apiFetch(`/nullifications/${requestId}`, { method: 'DELETE' });
+}
 
 export async function createTimeOffRequest(payload: {
   employeeId: string;

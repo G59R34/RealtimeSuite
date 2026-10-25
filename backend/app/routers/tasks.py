@@ -12,6 +12,43 @@ from ..deps import RequestUser, get_current_user, get_db, require_active_employe
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
+def _clock(value: object) -> str:
+    return value.strftime("%H:%M") if hasattr(value, "strftime") else str(value)
+
+
+def _require_no_task_window(
+    session: Session, employee_id: object, start_at: object, end_at: object
+) -> None:
+    """An approved no-task window blocks new work inside that time."""
+    if not employee_id or not start_at or not end_at:
+        return
+    conflict = session.execute(
+        text(
+            """
+            select n.start_at, n.end_at, n.reason,
+                   coalesce(p.full_name, p.email, 'That employee') as employee_name
+            from public.time_nullification_requests n
+            left join public.profiles p on p.id = n.employee_id
+            where n.employee_id = :employee and n.status = 'approved'
+              and n.start_at < :end and n.end_at > :start
+            order by n.start_at limit 1
+            """
+        ),
+        {"employee": employee_id, "start": start_at, "end": end_at},
+    ).mappings().first()
+    if conflict is None:
+        return
+    reason = f" — {conflict['reason']}" if conflict["reason"] else ""
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"{conflict['employee_name']} has approved no-task time from "
+            f"{_clock(conflict['start_at'])} to {_clock(conflict['end_at'])}{reason}. "
+            "Choose another time or employee."
+        ),
+    )
+
+
 @router.post("/assign")
 def assign_task(
     payload: dict = Body(...),
@@ -19,6 +56,9 @@ def assign_task(
     session: Session = Depends(get_db),
 ) -> dict:
     require_manager(session, user)
+    _require_no_task_window(
+        session, payload.get("employee_id"), payload.get("start_at"), payload.get("end_at")
+    )
     task_id = session.execute(
         text(
             """
@@ -63,6 +103,25 @@ def update_task(
     updates = {key: value for key, value in payload.items() if key in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update.")
+    if "start_at" in updates or "end_at" in updates:
+        current = session.execute(
+            text(
+                """
+                select t.start_at, t.end_at, ta.employee_id
+                from public.tasks t
+                left join public.task_assignments ta on ta.task_id = t.id
+                where t.id = :id
+                """
+            ),
+            {"id": task_id},
+        ).mappings().first()
+        if current is not None and current["employee_id"] is not None:
+            _require_no_task_window(
+                session,
+                current["employee_id"],
+                updates["start_at"] if "start_at" in updates else current["start_at"],
+                updates["end_at"] if "end_at" in updates else current["end_at"],
+            )
     assignments = []
     params = {"id": task_id, "actor": user.id}
     for key, value in updates.items():
@@ -96,6 +155,15 @@ def reassign_task(
     employee_id = payload.get("employee_id")
     if not employee_id:
         raise HTTPException(status_code=400, detail="Employee is required.")
+    task_window = session.execute(
+        text("select start_at, end_at from public.tasks where id = :id"),
+        {"id": task_id},
+    ).mappings().first()
+    if task_window is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    _require_no_task_window(
+        session, employee_id, task_window["start_at"], task_window["end_at"]
+    )
     result = session.execute(
         text(
             """

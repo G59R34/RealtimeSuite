@@ -12,9 +12,13 @@ import type {
   TaskPriority,
   TaskRow,
   TaskStatus,
+  TimelineZoomHours,
+  TimeNullificationRow,
+  TimeNullificationStatus,
   TimeOffRequestRow,
   WorkAreaRow
 } from '../types';
+import { TIMELINE_ZOOM_LEVELS } from '../types';
 import { minutesToHHMM, toTimeHHMM } from '../lib/time';
 import { DEFAULT_FEATURES } from '../lib/features';
 import type { FeatureFlags } from '../lib/features';
@@ -61,8 +65,12 @@ type TimelineBoardProps = {
   tasks: TaskRow[];
   taskAssignments: TaskAssignmentRow[];
   filters: BoardFilters;
+  onToggleFilter?: (key: keyof BoardFilters) => void;
+  shiftFilter?: string;
+  onShiftFilterChange?: (value: string) => void;
   selectedDate: string;
-  timelineWindowHours: 2 | 4 | 8;
+  timelineWindowHours: TimelineZoomHours;
+  onTimelineWindowChange?: (hours: TimelineZoomHours) => void;
   defaultShiftBreakMinutes: number;
   nowDate: Date;
   actorId: string;
@@ -72,6 +80,21 @@ type TimelineBoardProps = {
   timeOffRequests: TimeOffRequestRow[];
   exceptionRequests?: ExceptionRequestRow[];
   disciplineActions?: DisciplineActionRow[];
+  timeNullifications: TimeNullificationRow[];
+  onCreateTimeNullification: (payload: {
+    employeeId: string;
+    shiftId: string;
+    startAt: string;
+    endAt: string;
+    reason: string;
+    approved?: boolean;
+  }) => Promise<unknown>;
+  onReviewTimeNullification: (payload: {
+    requestId: string;
+    status: 'approved' | 'denied' | 'cancelled';
+    reviewNote?: string;
+  }) => Promise<unknown>;
+  onDeleteTimeNullification: (requestId: string) => Promise<unknown>;
   onCreateBoardNote: (payload: {
     body: string;
     isPublic: boolean;
@@ -96,7 +119,7 @@ type TimelineBoardProps = {
   onSendNoteTask: (payload: { employeeId: string; note: string }) => Promise<void>;
 };
 
-const PX_PER_MINUTE: Record<2 | 4 | 8, number> = { 2: 2.2, 4: 1.2, 8: 0.62 };
+const PX_PER_MINUTE: Record<TimelineZoomHours, number> = { 1: 3.1, 2: 2.2, 4: 1.2, 8: 0.62, 12: 0.45, 24: 0.26 };
 const ROW_HEIGHT = 50;
 const MIN_SHIFT_GAP_MINUTES = 10;
 const LEFT_WIDTH = 250;
@@ -113,12 +136,30 @@ const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
 // task on that shift was never acknowledged. One state is shown at a time, most
 // urgent first.
 type ShiftAlert = 'early' | 'late' | 'missing' | 'ack';
+type OperationsAlertKind = ShiftAlert | 'nullification';
+type OperationsAlert = {
+  id: string;
+  kind: OperationsAlertKind;
+  title: string;
+  detail: string;
+  shiftId?: string;
+  taskId?: string;
+  nullificationId?: string;
+};
 
 const SHIFT_ALERT_LABEL: Record<ShiftAlert, string> = {
   early: 'Early in',
   late: 'Late in',
   missing: 'No clock-in',
   ack: 'No ack'
+};
+
+const OPERATIONS_ALERT_LABEL: Record<OperationsAlertKind, string> = {
+  early: 'Early in',
+  late: 'Late in',
+  missing: 'No clock-in',
+  ack: 'No ack',
+  nullification: 'No-task'
 };
 
 const SHIFT_ALERT_HINT: Record<ShiftAlert, string> = {
@@ -132,11 +173,12 @@ const CLOCK_GRACE_MS = 60_000;
 const TASK_ACK_WINDOW_MS = 2 * 60_000;
 
 type MenuTarget = {
-  kind: 'task' | 'shift' | 'slot' | 'area' | 'board';
+  kind: 'task' | 'shift' | 'slot' | 'area' | 'board' | 'nullification';
   taskId?: string;
   shiftId?: string;
   employeeId?: string;
   workAreaId?: string;
+  nullificationId?: string;
   minutes?: number;
 };
 
@@ -249,8 +291,12 @@ export function TimelineBoard({
   tasks,
   taskAssignments,
   filters,
+  onToggleFilter,
+  shiftFilter = 'all',
+  onShiftFilterChange,
   selectedDate,
   timelineWindowHours,
+  onTimelineWindowChange,
   defaultShiftBreakMinutes,
   nowDate,
   actorId,
@@ -260,6 +306,10 @@ export function TimelineBoard({
   timeOffRequests,
   exceptionRequests = [],
   disciplineActions = [],
+  timeNullifications,
+  onCreateTimeNullification,
+  onReviewTimeNullification,
+  onDeleteTimeNullification,
   onCreateBoardNote,
   onDeleteBoardNote,
   onUpsertShift,
@@ -328,6 +378,14 @@ export function TimelineBoard({
   const [formBusy, setFormBusy] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [nullificationDraft, setNullificationDraft] = useState<null | {
+    employeeId: string;
+    shiftId: string;
+    shiftLabel: string;
+    startAt: string;
+    endAt: string;
+    reason: string;
+  }>(null);
   const [noteBody, setNoteBody] = useState('');
   const [notePublic, setNotePublic] = useState(false);
   const [noteBusy, setNoteBusy] = useState(false);
@@ -419,6 +477,32 @@ export function TimelineBoard({
     return map;
   }, [timeOffRequests, exceptionRequests, disciplineActions, selectedDate]);
 
+  // Approved (and still-pending) no-task windows grouped per employee row.
+  const nullificationsByEmployee = useMemo(() => {
+    const map = new Map<string, TimeNullificationRow[]>();
+    for (const row of timeNullifications) {
+      if (row.status !== 'approved' && row.status !== 'pending') continue;
+      const start = minutesIntoDay(row.start_at, selectedDate);
+      const end = minutesIntoDay(row.end_at, selectedDate);
+      if (end <= 0 || start >= 1440) continue;
+      const bucket = map.get(row.employee_id) ?? [];
+      bucket.push(row);
+      map.set(row.employee_id, bucket);
+    }
+    return map;
+  }, [timeNullifications, selectedDate]);
+
+  const pendingNullificationCount = useMemo(
+    () =>
+      timeNullifications.filter((row) => {
+        if (row.status !== 'pending') return false;
+        const start = minutesIntoDay(row.start_at, selectedDate);
+        const end = minutesIntoDay(row.end_at, selectedDate);
+        return end > 0 && start < 1440;
+      }).length,
+    [timeNullifications, selectedDate]
+  );
+
   const notesByArea = useMemo(() => {
     const map = new Map<string, BoardNoteRow[]>();
     for (const note of boardNotes) {
@@ -500,11 +584,8 @@ export function TimelineBoard({
     return null;
   }
 
-  const assignedTaskIds = useMemo(
-    () => new Set(taskAssignments.map((assignment) => assignment.task_id)),
-    [taskAssignments]
-  );
-
+  // Declared before the alert memo below: that memo calls taskVisible while it
+  // renders, so both the filter term and the predicate must already exist.
   const taskFilterTerm = taskSearch.trim().toLowerCase();
 
   function taskVisible(task: TaskRow): boolean {
@@ -516,6 +597,98 @@ export function TimelineBoard({
       (task.description ?? '').toLowerCase().includes(taskFilterTerm)
     );
   }
+
+  const operationsAlerts = useMemo<OperationsAlert[]>(() => {
+    if (!showShifts && !showTasks) return [];
+    const now = nowDate.getTime();
+    const alerts: OperationsAlert[] = [];
+    const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+    const selectedDayStart = dayStart(selectedDate).getTime();
+    const selectedDayEnd = selectedDayStart + 24 * 60 * 60 * 1000;
+
+    for (const row of timeNullifications) {
+      if (row.status !== 'pending') continue;
+      const start = minutesIntoDay(row.start_at, selectedDate);
+      const end = minutesIntoDay(row.end_at, selectedDate);
+      if (end <= 0 || start >= 1440) continue;
+      const employee = employeeById.get(row.employee_id);
+      alerts.push({
+        id: `nullification-${row.id}`,
+        kind: 'nullification',
+        title: `${employee?.full_name || employee?.email || 'Employee'} requested no-task time`,
+        detail: `${toTimeHHMM(row.start_at)}–${toTimeHHMM(row.end_at)}${row.reason ? ` · ${row.reason}` : ''}`,
+        nullificationId: row.id
+      });
+    }
+
+    const selectedDayKey = `${nowDate.getFullYear()}-${pad(nowDate.getMonth() + 1)}-${pad(nowDate.getDate())}`;
+    if (showShifts && selectedDate === selectedDayKey) {
+      for (const shift of shifts) {
+        if (!shift.employee_id) continue;
+        const start = new Date(shift.start_at).getTime();
+        const end = new Date(shift.end_at).getTime();
+        if (start >= selectedDayEnd || end < selectedDayStart) continue;
+        const employee = employeeById.get(shift.employee_id);
+        const name = employee?.full_name || employee?.email || 'Employee';
+        const clockedIn = shift.clocked_in_at ? new Date(shift.clocked_in_at).getTime() : null;
+        if (clockedIn !== null && clockedIn < start - CLOCK_GRACE_MS) {
+          alerts.push({ id: `shift-early-${shift.id}`, kind: 'early', title: `${name} clocked in early`, detail: toTimeHHMM(shift.start_at), shiftId: shift.id });
+        } else if (clockedIn !== null && clockedIn > start + CLOCK_GRACE_MS) {
+          alerts.push({ id: `shift-late-${shift.id}`, kind: 'late', title: `${name} clocked in late`, detail: toTimeHHMM(shift.start_at), shiftId: shift.id });
+        } else if (clockedIn === null && now > start + CLOCK_GRACE_MS) {
+          alerts.push({ id: `shift-missing-${shift.id}`, kind: 'missing', title: `${name} has not clocked in`, detail: `Shift started ${toTimeHHMM(shift.start_at)}`, shiftId: shift.id });
+        }
+      }
+    }
+
+    if (showTasks && filters.events) {
+      const assignmentByTask = new Map<string, TaskAssignmentRow[]>();
+      for (const assignment of taskAssignments) {
+        const bucket = assignmentByTask.get(assignment.task_id) ?? [];
+        bucket.push(assignment);
+        assignmentByTask.set(assignment.task_id, bucket);
+      }
+      for (const task of tasks) {
+        if (!taskVisible(task) || task.status === 'done' || task.status === 'cancelled') continue;
+        const start = new Date(task.start_at).getTime();
+        if (start < selectedDayStart || start >= selectedDayEnd || now <= start + TASK_ACK_WINDOW_MS) continue;
+        const assignments = assignmentByTask.get(task.id) ?? [];
+        for (const assignment of assignments) {
+          if (assignment.acknowledged_at) continue;
+          const employee = employeeById.get(assignment.employee_id);
+          alerts.push({
+            id: `task-ack-${task.id}-${assignment.employee_id}`,
+            kind: 'ack',
+            title: `${employee?.full_name || employee?.email || 'Employee'} hasn’t acknowledged “${task.title}”`,
+            detail: `Started ${toTimeHHMM(task.start_at)}`,
+            taskId: task.id
+          });
+        }
+      }
+    }
+    return alerts;
+  }, [showShifts, showTasks, nowDate, shifts, employees, selectedDate, filters.events, tasks, taskAssignments, taskStatusFilter, taskPriorityFilter, taskSearch, timeNullifications]);
+
+  function focusOperationsAlert(alert: OperationsAlert) {
+    const node = scrollRef.current;
+    const selector = alert.shiftId
+      ? `[data-ops-shift-id="${CSS.escape(alert.shiftId)}"]`
+      : alert.nullificationId
+        ? `[data-ops-null-id="${CSS.escape(alert.nullificationId)}"]`
+        : `[data-ops-task-id="${CSS.escape(alert.taskId ?? '')}"]`;
+    const target = node?.querySelector<HTMLElement>(selector);
+    if (!node || !target) return;
+    const boardRect = node.getBoundingClientRect();
+    const targetX = target.getBoundingClientRect().left - boardRect.left + node.scrollLeft + target.offsetWidth / 2;
+    node.scrollTo({ left: Math.max(0, targetX - node.clientWidth / 2), behavior: 'smooth' });
+    target.classList.add('rs-alert-focus');
+    window.setTimeout(() => target.classList.remove('rs-alert-focus'), 1800);
+  }
+
+  const assignedTaskIds = useMemo(
+    () => new Set(taskAssignments.map((assignment) => assignment.task_id)),
+    [taskAssignments]
+  );
 
   const unassignedTasks = useMemo(() => {
     const priorityRank: Record<TaskPriority, number> = { critical: 0, high: 1, normal: 2, low: 3 };
@@ -638,32 +811,19 @@ export function TimelineBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timelineWindowHours, selectedDate, hasViewportWidth]);
 
-  const presence = useMemo(() => {
-    let onDuty = 0;
-    let onBreak = 0;
-    let late = 0;
-    let offShift = 0;
-    for (const employee of employees) {
-      const employeeShifts = shiftsByEmployee.get(employee.id) ?? [];
-      if (employeeShifts.length === 0) {
-        offShift += 1;
-        continue;
-      }
-      const current = employeeShifts.find(
-        (shift) => new Date(shift.start_at).getTime() <= nowDate.getTime() && new Date(shift.end_at).getTime() >= nowDate.getTime()
-      );
-      if (!current) {
-        offShift += 1;
-      } else if (current.status === 'break') {
-        onBreak += 1;
-      } else if (current.clocked_in_at && new Date(current.clocked_in_at).getTime() > new Date(current.start_at).getTime() + 5 * 60000) {
-        late += 1;
-      } else {
-        onDuty += 1;
-      }
+  // Ctrl + wheel zooms the timeline instead of scrolling sideways.
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node || !onTimelineWindowChange) return;
+    function handleWheel(event: WheelEvent) {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      changeZoom(event.deltaY > 0 ? 1 : -1);
     }
-    return { onDuty, onBreak, late, offShift };
-  }, [employees, shiftsByEmployee, nowDate]);
+    node.addEventListener('wheel', handleWheel, { passive: false });
+    return () => node.removeEventListener('wheel', handleWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onTimelineWindowChange, timelineWindowHours]);
 
   const dragging = drag !== null;
 
@@ -985,6 +1145,74 @@ export function TimelineBoard({
     }
   }
 
+  function changeZoom(delta: number) {
+    if (!onTimelineWindowChange) return;
+    const index = TIMELINE_ZOOM_LEVELS.indexOf(timelineWindowHours);
+    const next = TIMELINE_ZOOM_LEVELS[clamp(index + delta, 0, TIMELINE_ZOOM_LEVELS.length - 1)];
+    if (next !== timelineWindowHours) onTimelineWindowChange(next);
+  }
+
+  function zoomIn() {
+    changeZoom(-1);
+  }
+
+  function zoomOut() {
+    changeZoom(1);
+  }
+
+  const canZoomIn = Boolean(onTimelineWindowChange) && timelineWindowHours !== TIMELINE_ZOOM_LEVELS[0];
+  const canZoomOut = Boolean(onTimelineWindowChange) && timelineWindowHours !== TIMELINE_ZOOM_LEVELS[TIMELINE_ZOOM_LEVELS.length - 1];
+
+  // A no-task window has to sit inside an existing shift, so the draft picks the
+  // shift that covers the requested minute (or the employee's first shift).
+  function openNullificationDraft(employeeId: string, startMinutes: number, minutes = 30) {
+    const employeeShifts = shiftsByEmployee.get(employeeId) ?? [];
+    const covering = employeeShifts.find((shift) => {
+      const start = minutesIntoDay(shift.start_at, selectedDate);
+      const end = minutesIntoDay(shift.end_at, selectedDate);
+      return startMinutes >= start && startMinutes < end;
+    });
+    const target = covering ?? employeeShifts[0];
+    if (!target) {
+      setNotice({ text: 'That employee has no shift to attach a no-task window to.', tone: 'warn' });
+      return;
+    }
+    const shiftStart = minutesIntoDay(target.start_at, selectedDate);
+    const shiftEnd = minutesIntoDay(target.end_at, selectedDate);
+    const start = Math.round(clamp(Math.max(startMinutes, shiftStart), shiftStart, shiftEnd - 10) / 5) * 5;
+    const end = Math.min(Math.round(clamp(start + minutes, start + 10, shiftEnd) / 5) * 5, shiftEnd);
+    setFormError(null);
+    setNullificationDraft({
+      employeeId,
+      shiftId: target.id,
+      shiftLabel: `${toTimeHHMM(target.start_at)}–${toTimeHHMM(target.end_at)}`,
+      startAt: toDateInputValue(isoAtMinutes(selectedDate, start)),
+      endAt: toDateInputValue(isoAtMinutes(selectedDate, end)),
+      reason: ''
+    });
+  }
+
+  async function decideNullification(row: TimeNullificationRow, status: 'approved' | 'denied') {
+    try {
+      await onReviewTimeNullification({ requestId: row.id, status });
+      setNotice({
+        text: `${status === 'approved' ? 'Approved' : 'Denied'} no-task time ${toTimeHHMM(row.start_at)}–${toTimeHHMM(row.end_at)}.`,
+        tone: 'ok'
+      });
+    } catch (error) {
+      reportMenuError(error, 'Could not update that no-task request.');
+    }
+  }
+
+  async function removeNullification(row: TimeNullificationRow) {
+    try {
+      await onDeleteTimeNullification(row.id);
+      setNotice({ text: 'No-task window removed.', tone: 'ok' });
+    } catch (error) {
+      reportMenuError(error, 'Could not remove that no-task window.');
+    }
+  }
+
   function buildMenu(): { title: string; subtitle?: string; items: MenuEntry[] } | null {
     if (!menu) return null;
 
@@ -1068,9 +1296,42 @@ export function TimelineBoard({
             detail: `${shift.break_minutes} min`,
             onSelect: () => void assignBreak(shift)
           },
+          {
+            kind: 'item',
+            label: 'Block task time…',
+            detail: shift.employee_id ? 'no tasks' : 'unassigned',
+            disabled: !shift.employee_id,
+            onSelect: () =>
+              shift.employee_id &&
+              openNullificationDraft(shift.employee_id, minutesIntoDay(shift.start_at, selectedDate))
+          },
           { kind: 'separator' },
           { kind: 'item', label: 'Delete shift', danger: true, onSelect: () => void removeShift(shift) }
         ]
+      };
+    }
+
+    if (menu.kind === 'nullification') {
+      const row = timeNullifications.find((item) => item.id === menu.nullificationId);
+      if (!row) return null;
+      const employee = employees.find((item) => item.id === row.employee_id);
+      const items: MenuEntry[] = [];
+      if (row.status === 'pending') {
+        items.push(
+          { kind: 'item', label: 'Approve request', detail: 'blocks tasks', onSelect: () => void decideNullification(row, 'approved') },
+          { kind: 'item', label: 'Deny request', onSelect: () => void decideNullification(row, 'denied') }
+        );
+      }
+      items.push({
+        kind: 'item',
+        label: row.status === 'pending' ? 'Cancel request' : 'Remove no-task window',
+        danger: true,
+        onSelect: () => void removeNullification(row)
+      });
+      return {
+        title: employee?.full_name || employee?.email || 'No-task window',
+        subtitle: `${toTimeHHMM(row.start_at)}–${toTimeHHMM(row.end_at)} · ${row.status}${row.reviewer_name ? ` · ${row.reviewer_name}` : ''}`,
+        items
       };
     }
 
@@ -1084,6 +1345,31 @@ export function TimelineBoard({
       }
       if (showTasks) {
         items.push({ kind: 'item', label: `New task at ${minutesToHHMM(minutes)}`, onSelect: () => openCreateTask(employee.id, minutes) });
+      }
+      const employeeShifts = shiftsByEmployee.get(employee.id) ?? [];
+      const shiftCovers = employeeShifts.some((shift) => {
+        const start = minutesIntoDay(shift.start_at, selectedDate);
+        const end = minutesIntoDay(shift.end_at, selectedDate);
+        return minutes >= start && minutes < end;
+      });
+      if (showTasks) {
+        items.push({
+          kind: 'item',
+          label: `Block task time from ${minutesToHHMM(minutes)}…`,
+          detail: shiftCovers ? 'no tasks' : 'no shift here',
+          disabled: !shiftCovers,
+          onSelect: () => openNullificationDraft(employee.id, minutes)
+        });
+      }
+      const employeePending = (nullificationsByEmployee.get(employee.id) ?? []).filter((row) => row.status === 'pending');
+      if (employeePending.length > 0) {
+        const [next] = employeePending;
+        items.push({
+          kind: 'item',
+          label: `Approve no-task request ${toTimeHHMM(next.start_at)}–${toTimeHHMM(next.end_at)}`,
+          detail: employeePending.length > 1 ? `+${employeePending.length - 1} more` : undefined,
+          onSelect: () => void decideNullification(next, 'approved')
+        });
       }
       items.push(
         { kind: 'separator' },
@@ -1159,6 +1445,28 @@ export function TimelineBoard({
     boardItems.push(
       { kind: 'item', label: 'Board note…', onSelect: () => startNote('') },
       { kind: 'separator' },
+      {
+        kind: 'item',
+        label: 'Zoom in',
+        detail: `${timelineWindowHours}h`,
+        disabled: !canZoomIn,
+        onSelect: zoomIn
+      },
+      {
+        kind: 'item',
+        label: 'Zoom out',
+        detail: `${timelineWindowHours}h`,
+        disabled: !canZoomOut,
+        onSelect: zoomOut
+      },
+      {
+        kind: 'item',
+        label: 'Reset zoom',
+        detail: '8h',
+        disabled: timelineWindowHours === 8 || !onTimelineWindowChange,
+        onSelect: () => onTimelineWindowChange?.(8)
+      },
+      { kind: 'separator' },
       { kind: 'item', label: 'Scroll to current time', onSelect: scrollToNow }
     );
     if (filtersActive) {
@@ -1210,30 +1518,69 @@ export function TimelineBoard({
       <div className="rs-board-toolbar">
         <div className="rs-board-toolbar-group">
           <strong className="rs-board-title">Operations Board</strong>
-          <span className="rs-board-date">{selectedDate}</span>
         </div>
-        <div className="rs-board-toolbar-group">
+        <div className="rs-board-toolbar-group rs-employee-filter">
           <input
             type="search"
-            placeholder="Filter employees..."
+            placeholder="Find employee..."
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          {onShiftFilterChange ? (
+            <select
+              aria-label="Employee shift filter"
+              value={shiftFilter}
+              onChange={(event) => onShiftFilterChange(event.target.value)}
+            >
+              <option value="all">All Employees</option>
+              <option value="current_future">Current + Future</option>
+              <option value="future">Future Only</option>
+              <option value="06">Early (06:00+)</option>
+              <option value="08">Morning (08:00+)</option>
+              <option value="10">Midday (10:00+)</option>
+              <option value="12">Afternoon (12:00+)</option>
+            </select>
+          ) : null}
+        </div>
+        <div className="rs-board-toolbar-group">
           {showShifts ? (
             <button type="button" onClick={() => openCreateShift(employees[0]?.id ?? '', nowMinutes)} disabled={!employees.length}>
               Add Shift
             </button>
           ) : null}
-          <button type="button" onClick={() => { setFormError(null); setAreaDraft({ name: '', description: '', color: '#1f56b9' }); }}>
-            New Work Area
+          <button
+            type="button"
+            title="Create a work area"
+            onClick={() => { setFormError(null); setAreaDraft({ name: '', description: '', color: '#1f56b9' }); }}
+          >
+            New Area
           </button>
           <button type="button" title="Scroll to the current time" onClick={scrollToNow}>
             Now
           </button>
+          <div className="rs-zoom" role="group" aria-label="Timeline zoom">
+            <button type="button" onClick={zoomOut} disabled={!canZoomOut} title="Zoom out (Ctrl + scroll)">
+              −
+            </button>
+            <span className="rs-zoom-label" title="Visible hours across the board">
+              {timelineWindowHours === 24 ? 'Full day' : `${timelineWindowHours}h`}
+            </span>
+            <button type="button" onClick={zoomIn} disabled={!canZoomIn} title="Zoom in (Ctrl + scroll)">
+              +
+            </button>
+            <button
+              type="button"
+              className="rs-zoom-reset"
+              onClick={() => onTimelineWindowChange?.(8)}
+              disabled={!onTimelineWindowChange || timelineWindowHours === 8}
+              title="Reset zoom to 8 hours"
+            >
+              Reset
+            </button>
+          </div>
         </div>
         {showTasks ? (
-          <div className="rs-board-toolbar-group rs-task-filters">
-            <span className="rs-filter-label">Tasks</span>
+          <div className="rs-board-toolbar-group rs-task-filters" title="Task filters">
             <input
               type="search"
               placeholder="Filter tasks..."
@@ -1268,26 +1615,83 @@ export function TimelineBoard({
             </button>
           </div>
         ) : null}
-        <div className="rs-board-toolbar-group rs-presence">
-          <span className="presence-pill">On Duty {presence.onDuty}</span>
-          <span className="presence-pill">Break {presence.onBreak}</span>
-          <span className="presence-pill warn">Late {presence.late}</span>
-          <span className="presence-pill">Off Shift {presence.offShift}</span>
-        </div>
-        <div className="rs-board-toolbar-group rs-legend">
-          {showShifts ? <span><i className="rs-legend-line" />Shift</span> : null}
-          {showTasks ? <span><i className="rs-dot" style={{ background: '#2b6cb0' }} />Task</span> : null}
-          {showTasks ? <span><i className="rs-dot" style={{ background: '#b02033' }} />Critical</span> : null}
-          {showShifts ? <span><i className="rs-legend-swatch" />Clock / ack issue</span> : null}
-          {showShifts ? <span><i className="rs-legend-swatch pto" />Time off / leave</span> : null}
-          {showShifts ? <span><i className="rs-legend-swatch suspension" />Suspension</span> : null}
-          <span className="rs-board-hint">
-            {showShifts
-              ? 'Drag the shift line or a task puck to move it · click a row to add a shift · right-click for actions'
-              : 'Drag task pucks to move them · right-click for actions'}
-          </span>
+        {onToggleFilter ? (
+          <div className="rs-board-toolbar-group rs-view-toggles" title="Layers">
+            <label title="Show shift lines per employee">
+              <input
+                type="checkbox"
+                checked={filters.resources}
+                onChange={() => onToggleFilter('resources')}
+              />
+              Areas
+            </label>
+            {showTasks ? (
+              <label title="Show task pucks">
+                <input type="checkbox" checked={filters.events} onChange={() => onToggleFilter('events')} />
+                Tasks
+              </label>
+            ) : null}
+            {showTasks ? (
+              <label title="Show tasks that have no assignee">
+                <input
+                  type="checkbox"
+                  checked={filters.unassigned}
+                  onChange={() => onToggleFilter('unassigned')}
+                />
+                Unassigned
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="rs-board-toolbar-group rs-board-help-group">
+          {showTasks && pendingNullificationCount > 0 ? (
+            <span className="rs-legend-pending">{pendingNullificationCount} pending</span>
+          ) : null}
+          <details className="rs-board-help">
+            <summary aria-label="Legend and board tips" title="Legend and board tips">?</summary>
+            <div className="rs-board-help-panel">
+              <strong>Legend</strong>
+              <ul>
+                {showShifts ? <li><i className="rs-legend-line" />Shift window</li> : null}
+                {showTasks ? <li><i className="rs-dot" style={{ background: '#2b6cb0' }} />Task</li> : null}
+                {showTasks ? <li><i className="rs-dot" style={{ background: '#b02033' }} />Critical task</li> : null}
+                {showShifts ? <li><i className="rs-legend-swatch" />Clock / ack issue</li> : null}
+                {showShifts ? <li><i className="rs-legend-swatch pto" />Time off / leave</li> : null}
+                {showShifts ? <li><i className="rs-legend-swatch suspension" />Suspension</li> : null}
+                {showTasks ? <li><i className="rs-legend-swatch null-task" />No-task window</li> : null}
+              </ul>
+              <strong>Tips</strong>
+              <p className="rs-board-hint">
+                {showShifts
+                  ? 'Drag a shift line or task puck to move it · click a row to add a shift · right-click anything for actions · Ctrl + scroll to zoom'
+                  : 'Drag task pucks to move them · right-click for actions · Ctrl + scroll to zoom'}
+              </p>
+            </div>
+          </details>
         </div>
       </div>
+
+      {operationsAlerts.length > 0 ? (
+        <section className="rs-operations-alerts" aria-label="Live operations alerts">
+          <strong className="rs-operations-alert-count">{operationsAlerts.length} needs attention</strong>
+          <div className="rs-operations-alert-list">
+            {operationsAlerts.slice(0, 6).map((alert) => (
+              <button
+                key={alert.id}
+                type="button"
+                className={`rs-operations-alert ${alert.kind}`}
+                title={`${alert.title} · ${alert.detail}. Click to locate on timeline.`}
+                onClick={() => focusOperationsAlert(alert)}
+              >
+                <span>{OPERATIONS_ALERT_LABEL[alert.kind]}</span>
+                <strong>{alert.title}</strong>
+                <small>{alert.detail}</small>
+              </button>
+            ))}
+            {operationsAlerts.length > 6 ? <span className="rs-operations-alert-more">+{operationsAlerts.length - 6} more</span> : null}
+          </div>
+        </section>
+      ) : null}
 
       <div className="rs-board-body">
         <div className="rs-board-scroll" ref={scrollRef}>
@@ -1436,6 +1840,7 @@ export function TimelineBoard({
                               type="button"
                               className={`rs-shift-line ${statusClass(shift.status)}${alert ? ` alert-${alert}` : ''}${width < 52 ? ' compact' : ''}${drag?.kind === 'shift' && drag.id === shift.id ? ' rs-dragging' : ''}`}
                               style={{ left: start * ppm + dragOffset, width, color }}
+                              data-ops-shift-id={shift.id}
                               title={`${area?.name ?? 'No work area'} ${toTimeHHMM(shift.start_at)}–${toTimeHHMM(shift.end_at)} (${shift.status.replace('_', ' ')})${alert ? ` — ${SHIFT_ALERT_HINT[alert]}` : ''} — drag to move, right-click for actions`}
                               onPointerDown={(event) => beginDrag(event, 'shift', shift.id)}
                               onContextMenu={(event) => openMenu(event, { kind: 'shift', shiftId: shift.id })}
@@ -1470,6 +1875,38 @@ export function TimelineBoard({
                           );
                         }) : null}
 
+                        {(nullificationsByEmployee.get(employee.id) ?? []).map((row) => {
+                          const start = clamp(minutesIntoDay(row.start_at, selectedDate), 0, 1440);
+                          const end = clamp(minutesIntoDay(row.end_at, selectedDate), 0, 1440);
+                          const width = Math.max(6, (end - start) * ppm);
+                          return (
+                            <span
+                              key={row.id}
+                              className={`rs-null-band ${row.status}`}
+                              style={{ left: start * ppm, width }}
+                              data-ops-null-id={row.id}
+                              role="button"
+                              tabIndex={0}
+                              title={`${row.status === 'pending' ? 'Requested' : 'Approved'} no-task time ${toTimeHHMM(row.start_at)}–${toTimeHHMM(row.end_at)}${row.reason ? ` — ${row.reason}` : ''}${row.reviewer_name ? ` (${row.reviewer_name})` : ''} — click or right-click for actions`}
+                              onClick={(event) => openMenu(event, { kind: 'nullification', nullificationId: row.id })}
+                              onContextMenu={(event) => openMenu(event, { kind: 'nullification', nullificationId: row.id })}
+                              onKeyDown={(event) => {
+                                if (event.key !== 'Enter' && event.key !== ' ') return;
+                                event.preventDefault();
+                                const rect = event.currentTarget.getBoundingClientRect();
+                                setMenu({
+                                  kind: 'nullification',
+                                  nullificationId: row.id,
+                                  x: rect.left,
+                                  y: rect.bottom
+                                });
+                              }}
+                            >
+                              {width > 56 ? <small>{row.status === 'pending' ? 'Requested' : 'No tasks'}</small> : null}
+                            </span>
+                          );
+                        })}
+
                         {showTasks && filters.events ? employeeAssignments.map((assignment) => {
                           const task = taskById.get(assignment.task_id);
                           if (!task || !taskVisible(task)) return null;
@@ -1488,6 +1925,7 @@ export function TimelineBoard({
                               type="button"
                               className={`rs-bar rs-task-bar ${task.status}${ackOverdue ? ' ack-overdue' : ''}${drag?.kind === 'task' && drag.id === task.id ? ' rs-dragging' : ''}`}
                               style={{ left: start * ppm + dragOffset, width, background: priorityColor(task.priority) }}
+                              data-ops-task-id={task.id}
                               title={`${task.title} (${task.priority}, ${task.status})${ackOverdue ? ' — acknowledgement overdue' : ''} — drag to move, right-click for actions`}
                               onPointerDown={(event) => beginDrag(event, 'task', task.id)}
                               onContextMenu={(event) => openMenu(event, { kind: 'task', taskId: task.id, employeeId: employee.id })}
@@ -1691,6 +2129,82 @@ export function TimelineBoard({
               )
             )}
           </ul>
+        </div>
+      ) : null}
+
+      {nullificationDraft ? (
+        <div className="ops-editor-backdrop" onClick={() => setNullificationDraft(null)}>
+          <form
+            className="ops-editor-modal rs-null-modal"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(async () => {
+                const startAt = fromDateInputValue(nullificationDraft.startAt);
+                const endAt = fromDateInputValue(nullificationDraft.endAt);
+                if (new Date(endAt).getTime() <= new Date(startAt).getTime()) {
+                  throw new Error('The end time must be after the start time.');
+                }
+                await onCreateTimeNullification({
+                  employeeId: nullificationDraft.employeeId,
+                  shiftId: nullificationDraft.shiftId,
+                  startAt,
+                  endAt,
+                  reason: nullificationDraft.reason,
+                  approved: true
+                });
+                setNotice({ text: 'No-task window saved. Tasks cannot be assigned inside it.', tone: 'ok' });
+              }, () => setNullificationDraft(null));
+            }}
+          >
+            <header className="ops-editor-head">
+              <h3>Block Task Time</h3>
+              <button type="button" onClick={() => setNullificationDraft(null)}>Close</button>
+            </header>
+            <div className="ops-editor-body">
+              <p className="rs-null-modal-subject" style={{ gridColumn: '1 / -1' }}>
+                {employees.find((employee) => employee.id === nullificationDraft.employeeId)?.full_name ??
+                  employees.find((employee) => employee.id === nullificationDraft.employeeId)?.email ??
+                  'Employee'}
+                {' · shift '}
+                {nullificationDraft.shiftLabel}
+              </p>
+              <label>
+                Start
+                <input
+                  type="datetime-local"
+                  value={nullificationDraft.startAt}
+                  onChange={(event) => setNullificationDraft({ ...nullificationDraft, startAt: event.target.value })}
+                  required
+                />
+              </label>
+              <label>
+                End
+                <input
+                  type="datetime-local"
+                  value={nullificationDraft.endAt}
+                  onChange={(event) => setNullificationDraft({ ...nullificationDraft, endAt: event.target.value })}
+                  required
+                />
+              </label>
+              <label style={{ gridColumn: '1 / -1' }}>
+                Reason
+                <textarea
+                  rows={2}
+                  placeholder="Why should no tasks land in this window?"
+                  value={nullificationDraft.reason}
+                  onChange={(event) => setNullificationDraft({ ...nullificationDraft, reason: event.target.value })}
+                />
+              </label>
+              <p className="rs-task-assignment-hint" style={{ gridColumn: '1 / -1' }}>
+                Approved immediately — the board will refuse task assignments that overlap this window.
+              </p>
+              {formError ? <p className="auth-error" style={{ gridColumn: '1 / -1' }}>{formError}</p> : null}
+              <div className="ops-editor-actions" style={{ gridColumn: '1 / -1' }}>
+                <button type="submit" disabled={formBusy}>{formBusy ? 'Saving…' : 'Block Time'}</button>
+              </div>
+            </div>
+          </form>
         </div>
       ) : null}
 

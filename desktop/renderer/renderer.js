@@ -539,6 +539,334 @@ async function loadFeatures() {
   renderFeatures();
 }
 
+// -------------------------------------------------------------- database tab
+
+const dbState = {
+  tables: [],
+  data: null,
+  limit: 25,
+  offset: 0,
+  editing: null,
+  editorInputs: new Map()
+};
+
+function editorInitialValue(value) {
+  if (value === null) return 'NULL';
+  return value === 'NULL' ? "'NULL'" : value;
+}
+
+function parseEditorValue(raw) {
+  const trimmed = String(raw).trim();
+  if (trimmed === 'NULL') return null;
+  if (trimmed === "'NULL'") return 'NULL';
+  return String(raw);
+}
+
+function renderDatabaseTables() {
+  const select = $('db-table');
+  const previous = dbState.data ? dbState.data.name : select.value;
+  select.textContent = '';
+  if (dbState.tables.length === 0) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No tables found';
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  for (const table of dbState.tables) {
+    const option = document.createElement('option');
+    option.value = table.name;
+    option.textContent = table.rows === null ? table.name : `${table.name} (${table.rows})`;
+    if (table.name === previous) option.selected = true;
+    select.appendChild(option);
+  }
+  if (!select.value) select.value = dbState.tables[0].name;
+}
+
+async function loadDatabaseTables(offset = 0) {
+  const result = await api.listDatabaseTables();
+  if (!result.ok) {
+    dbState.tables = [];
+    renderDatabaseTables();
+    $('db-status').textContent = result.error;
+    return;
+  }
+  dbState.tables = result.tables;
+  renderDatabaseTables();
+  const selected = $('db-table').value;
+  if (selected) await loadDatabaseRows({ table: selected, offset });
+}
+
+async function loadDatabaseRows({ table, offset } = {}) {
+  const target = table || $('db-table').value;
+  if (!target) {
+    $('db-status').textContent = 'Choose a table to load its rows.';
+    return;
+  }
+  closeRowEditor();
+  $('db-status').textContent = `Loading ${target}...`;
+  const nextOffset = Math.max(offset === undefined ? dbState.offset : offset, 0);
+  const result = await api.readDatabaseRows({ table: target, limit: dbState.limit, offset: nextOffset });
+  if (!result.ok) {
+    dbState.data = null;
+    renderDatabaseRows();
+    $('db-status').textContent = result.error;
+    return;
+  }
+  if (result.table.rows.length === 0 && result.table.total > 0 && nextOffset > 0) {
+    const lastPage = Math.floor((result.table.total - 1) / result.table.limit) * result.table.limit;
+    if (lastPage !== nextOffset) return loadDatabaseRows({ table: target, offset: lastPage });
+  }
+  dbState.data = result.table;
+  dbState.offset = result.table.offset;
+  $('db-status').textContent = result.table.total === 0 ? `${result.table.name} is empty.` : '';
+  renderDatabaseRows();
+}
+
+function renderDatabaseRows() {
+  const head = $('db-row-table').querySelector('thead tr');
+  const body = $('db-row-body');
+  head.textContent = '';
+  body.textContent = '';
+
+  const data = dbState.data;
+  if (!data) {
+    $('db-range').textContent = '—';
+    $('btn-db-prev').disabled = true;
+    $('btn-db-next').disabled = true;
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.className = 'muted';
+    cell.textContent = 'No table loaded.';
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+
+  const actionsTh = document.createElement('th');
+  actionsTh.textContent = 'Actions';
+  head.appendChild(actionsTh);
+  for (const column of data.columns) {
+    const th = document.createElement('th');
+    th.textContent = column.name;
+    th.title = `${column.type}${column.required ? ' · not null' : ''}`;
+    if (data.primaryKey.includes(column.name)) {
+      th.textContent = `🔑 ${column.name}`;
+      th.title = `${column.type} · primary key`;
+    }
+    head.appendChild(th);
+  }
+
+  if (data.rows.length === 0) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = data.columns.length + 1;
+    cell.className = 'muted';
+    cell.textContent = 'This table has no rows.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+
+  data.rows.forEach((record, index) => {
+    const row = document.createElement('tr');
+    const actions = document.createElement('td');
+    actions.className = 'actions';
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'small';
+    edit.textContent = 'Edit';
+    edit.disabled = data.primaryKey.length === 0;
+    edit.title = edit.disabled ? 'This table has no primary key.' : 'Edit this row';
+    edit.addEventListener('click', () => openRowEditor(index));
+    actions.appendChild(edit);
+    row.appendChild(actions);
+    for (const column of data.columns) {
+      const cell = document.createElement('td');
+      cell.className = 'db-cell';
+      const value = record[column.name];
+      if (value === null) {
+        cell.classList.add('muted');
+        cell.textContent = 'NULL';
+      } else {
+        cell.textContent = value;
+        cell.title = value;
+      }
+      row.appendChild(cell);
+    }
+    body.appendChild(row);
+  });
+
+  const first = data.total === 0 ? 0 : data.offset + 1;
+  const last = Math.min(data.offset + data.rows.length, data.total);
+  $('db-range').textContent = `${first}–${last} of ${data.total} row${data.total === 1 ? '' : 's'}`;
+  $('btn-db-prev').disabled = data.offset <= 0;
+  $('btn-db-next').disabled = data.offset + data.rows.length >= data.total;
+}
+
+function closeRowEditor() {
+  dbState.editing = null;
+  dbState.editorInputs = new Map();
+  $('db-editor').classList.add('hidden');
+  $('db-editor-fields').textContent = '';
+  $('db-editor-status').textContent = '';
+}
+
+function openRowEditor(index) {
+  const data = dbState.data;
+  if (!data || !data.rows[index]) return;
+  dbState.editing = { index, row: data.rows[index] };
+  dbState.editorInputs = new Map();
+  const container = $('db-editor-fields');
+  container.textContent = '';
+  $('db-editor-title').textContent = `Edit ${data.name}`;
+  $('db-editor-subtitle').textContent = `Row ${data.offset + index + 1} · key ${data.primaryKey.map((column) => data.rows[index][column]).join(' / ')}`;
+  $('db-editor-status').textContent = '';
+
+  for (const column of data.columns) {
+    const field = document.createElement('label');
+    field.className = 'field db-field';
+    const caption = document.createElement('span');
+    caption.textContent = column.name;
+    const meta = document.createElement('em');
+    meta.className = 'db-type';
+    meta.textContent = column.type;
+    caption.appendChild(meta);
+
+    const value = data.rows[index][column.name];
+    const initial = editorInitialValue(value);
+    const multiline = value !== null && (value.length > 70 || /text|json/i.test(column.type));
+    const input = document.createElement(multiline ? 'textarea' : 'input');
+    if (multiline) input.rows = 3;
+    else input.type = 'text';
+    input.value = initial;
+    input.spellcheck = false;
+    input.dataset.column = column.name;
+    if (column.name === 'password_hash' || column.name === 'hashed_password') {
+      input.title = 'Password hashes cannot be read back; set a new password in the Users tab instead.';
+      input.disabled = true;
+    }
+    dbState.editorInputs.set(column.name, input);
+
+    field.append(caption, input);
+    container.appendChild(field);
+  }
+
+  $('db-editor').classList.remove('hidden');
+  $('db-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function editorChanges() {
+  const editing = dbState.editing;
+  if (!editing) return {};
+  const changes = {};
+  for (const [column, input] of dbState.editorInputs) {
+    if (input.disabled) continue;
+    const original = editing.row[column];
+    const value = parseEditorValue(input.value);
+    if (original === null && value === null) continue;
+    if (original !== null && value !== null && String(original) === value) continue;
+    changes[column] = value;
+  }
+  return changes;
+}
+
+function editorKey() {
+  const data = dbState.data;
+  const row = dbState.editing ? dbState.editing.row : null;
+  const key = {};
+  for (const column of data.primaryKey) key[column] = row[column];
+  return key;
+}
+
+$('btn-db-save-row').addEventListener('click', () => withBusy($('btn-db-save-row'), 'Saving...', async () => {
+  if (!dbState.editing || !dbState.data) throw new Error('Choose a row to edit first.');
+  const changes = editorChanges();
+  if (Object.keys(changes).length === 0) {
+    $('db-editor-status').textContent = 'No changes to save.';
+    return;
+  }
+  const result = await api.updateDatabaseRow({
+    table: dbState.data.name,
+    key: editorKey(),
+    changes
+  });
+  if (!result.ok) throw new Error(result.error);
+  const offset = dbState.offset;
+  closeRowEditor();
+  await loadDatabaseTables(offset);
+  banner(result.message || 'Row saved.', 'ok');
+}));
+
+$('btn-db-delete-row').addEventListener('click', () => withBusy($('btn-db-delete-row'), 'Deleting...', async () => {
+  if (!dbState.editing || !dbState.data) throw new Error('Choose a row to delete first.');
+  const table = dbState.data.name;
+  const key = editorKey();
+  const label = Object.entries(key).map(([column, value]) => `${column}=${value}`).join(', ');
+  if (!window.confirm(`Delete this row from ${table} (${label})? This cannot be undone.`)) return;
+  const result = await api.deleteDatabaseRow({ table, key });
+  if (!result.ok) throw new Error(result.error);
+  const offset = dbState.offset;
+  closeRowEditor();
+  await loadDatabaseTables(offset);
+  banner(result.message || 'Row deleted.', 'ok');
+}));
+
+$('btn-db-close-editor').addEventListener('click', () => closeRowEditor());
+$('btn-db-refresh').addEventListener('click', () => withBusy($('btn-db-refresh'), 'Loading...', loadDatabaseTables));
+$('db-table').addEventListener('change', () => {
+  void loadDatabaseRows({ table: $('db-table').value, offset: 0 }).catch((error) => {
+    $('db-status').textContent = error.message || String(error);
+  });
+});
+$('db-page-size').addEventListener('change', () => {
+  dbState.limit = Number($('db-page-size').value) || 25;
+  void loadDatabaseRows({ offset: 0 }).catch((error) => {
+    $('db-status').textContent = error.message || String(error);
+  });
+});
+$('btn-db-prev').addEventListener('click', () => {
+  void loadDatabaseRows({ offset: Math.max(dbState.offset - dbState.limit, 0) }).catch((error) => {
+    $('db-status').textContent = error.message || String(error);
+  });
+});
+$('btn-db-next').addEventListener('click', () => {
+  void loadDatabaseRows({ offset: dbState.offset + dbState.limit }).catch((error) => {
+    $('db-status').textContent = error.message || String(error);
+  });
+});
+
+function updateResetButton() {
+  const armed = $('db-reset-confirm').value.trim() === 'RESET';
+  const running = Boolean(state.status && (state.status.state === 'running' || state.status.state === 'starting'));
+  const button = $('btn-db-reset');
+  button.disabled = !armed || running;
+  button.title = running
+    ? 'Stop the application server before resetting the database.'
+    : armed ? 'Delete every record and rebuild the schema.' : 'Type RESET to enable this button.';
+}
+
+$('db-reset-confirm').addEventListener('input', updateResetButton);
+
+$('btn-db-reset').addEventListener('click', () => {
+  const task = withBusy($('btn-db-reset'), 'Resetting...', async () => {
+    const confirmation = $('db-reset-confirm').value.trim();
+    if (confirmation !== 'RESET') throw new Error('Type RESET to confirm the database reset.');
+    if (!window.confirm('Reset the database? Every record will be deleted and the schema rebuilt. A safety backup is created first when possible.')) return;
+    $('db-reset-status').textContent = 'Resetting the database...';
+    const result = await api.resetDatabase({ confirmed: true });
+    if (!result.ok) throw new Error(result.error);
+    $('db-reset-confirm').value = '';
+    $('db-reset-status').textContent = result.message || 'Database reset complete.';
+    updateResetButton();
+    await refresh();
+    await loadDatabaseTables();
+    banner(result.message || 'Database reset complete.', 'ok');
+  });
+  void task.then(updateResetButton, updateResetButton);
+});
+
 // ---------------------------------------------------------------- navigation
 
 document.querySelectorAll('.nav button').forEach((button) => {
@@ -557,6 +885,12 @@ document.querySelectorAll('.nav button').forEach((button) => {
     }
     if (button.dataset.tab === 'features') {
       void loadFeatures().catch((error) => banner(error.message || String(error)));
+    }
+    if (button.dataset.tab === 'database') {
+      updateResetButton();
+      void loadDatabaseTables().catch((error) => {
+        $('db-status').textContent = error.message || String(error);
+      });
     }
   });
 });
@@ -819,7 +1153,10 @@ $('btn-clear-logs').addEventListener('click', async () => {
 });
 
 api.onLog((entry) => appendLog(entry));
-api.onStatus((status) => renderStatus(status));
+api.onStatus((status) => {
+  renderStatus(status);
+  updateResetButton();
+});
 api.onLogsCleared(() => {
   $('log-view').textContent = '';
   state.logs = [];

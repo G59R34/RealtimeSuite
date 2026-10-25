@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import type { OrganizationExperienceBuilderConfig, OrganizationSettings } from '../types';
+import type { OrganizationExperienceBuilderConfig, OrganizationSettings, TimelineZoomHours } from '../types';
+import { TIMELINE_ZOOM_LEVELS } from '../types';
 import { ClockInLocationsSettings } from './ClockInLocationsSettings';
 
 type OrgSettingsProps = {
@@ -22,7 +23,7 @@ type OrgSettingsProps = {
     enableExtendedLeaveLock: boolean;
     extendedLeaveThresholdDays: number;
     enableAdminRealtimeNotifications: boolean;
-    defaultTimelineWindowHours: 2 | 4 | 8;
+    defaultTimelineWindowHours: TimelineZoomHours;
     defaultShiftBreakMinutes: number;
   }) => Promise<void>;
 };
@@ -36,7 +37,7 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
   const [loginLogoUrl, setLoginLogoUrl] = useState('');
   const [loginBackgroundImageUrl, setLoginBackgroundImageUrl] = useState('');
   const [loginAnnouncement, setLoginAnnouncement] = useState('');
-  const [timelineWindowHours, setTimelineWindowHours] = useState<2 | 4 | 8>(8);
+  const [timelineWindowHours, setTimelineWindowHours] = useState<TimelineZoomHours>(8);
   const [defaultBreakMinutes, setDefaultBreakMinutes] = useState(30);
   const [experienceBuilderConfig, setExperienceBuilderConfig] = useState<OrganizationExperienceBuilderConfig | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -136,12 +137,14 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
             Default timeline window
             <select
               value={timelineWindowHours}
-              onChange={(event) => setTimelineWindowHours(Number(event.target.value) as 2 | 4 | 8)}
+              onChange={(event) => setTimelineWindowHours(Number(event.target.value) as TimelineZoomHours)}
               disabled={disabled}
             >
-              <option value={2}>2 hours</option>
-              <option value={4}>4 hours</option>
-              <option value={8}>8 hours</option>
+              {TIMELINE_ZOOM_LEVELS.map((hours) => (
+                <option key={hours} value={hours}>
+                  {hours === 24 ? 'Full day' : `${hours} hour${hours === 1 ? '' : 's'}`}
+                </option>
+              ))}
             </select>
           </label>
           <label>

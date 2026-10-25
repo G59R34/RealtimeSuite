@@ -182,6 +182,26 @@ def dashboard(
             text("select * from public.discipline_actions order by created_at desc limit 300")
         ).mappings().all()
     ]
+    nullifications = [
+        dict(row)
+        for row in session.execute(
+            text(
+                """
+                select n.id, n.employee_id, n.shift_id, n.start_at, n.end_at, n.reason,
+                       n.status, n.requested_by, n.reviewed_by, n.reviewed_at,
+                       n.review_note, n.created_at, n.updated_at,
+                       e.full_name as employee_name,
+                       r.full_name as reviewer_name
+                from public.time_nullification_requests n
+                left join public.profiles e on e.id = n.employee_id
+                left join public.profiles r on r.id = n.reviewed_by
+                where n.start_at >= :start and n.start_at < :end
+                order by n.start_at
+                """
+            ),
+            {"start": month_start, "end": month_end},
+        ).mappings().all()
+    ]
     intelligence = session.execute(
         text("select public.fetch_shift_intelligence(cast(:day as date), 14)"),
         {"day": selected_date},
@@ -226,6 +246,7 @@ def dashboard(
         "shiftIntelligence": intelligence if isinstance(intelligence, dict) else json.loads(intelligence or "{}"),
         "disciplineActions": discipline,
         "boardNotes": board_notes,
+        "timeNullifications": nullifications,
     }
 
 
@@ -395,6 +416,17 @@ def portal(
         ),
         {"id": user.id},
     ).mappings().all()
+    nullifications = session.execute(
+        text(
+            """
+            select id, employee_id, shift_id, start_at, end_at, reason, status,
+                   requested_by, reviewed_by, reviewed_at, review_note, created_at, updated_at
+            from public.time_nullification_requests
+            where employee_id = :id order by start_at desc limit 120
+            """
+        ),
+        {"id": user.id},
+    ).mappings().all()
     restriction_row = session.execute(
         text(
             """
@@ -454,6 +486,7 @@ def portal(
         "timeOffRequests": [dict(row) for row in time_off],
         "exceptionRequests": [dict(row) for row in exceptions],
         "overtimeRequests": [dict(row) for row in overtime],
+        "timeNullifications": [dict(row) for row in nullifications],
         "restriction": ({
             "kind": restriction_row["punishment_type"],
             "title": restriction_row["title"] or restriction_row["punishment_type"],

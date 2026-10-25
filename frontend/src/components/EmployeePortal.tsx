@@ -75,6 +75,15 @@ type EmployeePortalProps = {
     requestNote?: string;
   }) => Promise<void>;
   onAcceptShiftSwapRequest: (requestId: string, acceptanceNote?: string) => Promise<void>;
+  onCreateTimeNullification: (payload: {
+    employeeId: string;
+    shiftId: string;
+    startAt: string;
+    endAt: string;
+    reason: string;
+    approved?: boolean;
+  }) => Promise<unknown>;
+  onDeleteTimeNullification: (requestId: string) => Promise<unknown>;
   onPreviewTimeOffCoverageImpact: (payload: {
     employeeId: string;
     startDate: string;
@@ -279,6 +288,8 @@ export function EmployeePortal({
   onRespondToAssignedOvertimeRequest,
   onCreateShiftSwapRequest,
   onAcceptShiftSwapRequest,
+  onCreateTimeNullification,
+  onDeleteTimeNullification,
   onPreviewTimeOffCoverageImpact,
   onUpdateHelpfulInfo,
   onSendMessage,
@@ -362,6 +373,12 @@ export function EmployeePortal({
   const [requestEnd, setRequestEnd] = useState(todayDateInputValue());
   const [requestType, setRequestType] = useState<TimeOffRequestType>('vacation');
   const [requestReason, setRequestReason] = useState('');
+
+  const [nullificationShiftId, setNullificationShiftId] = useState('');
+  const [nullificationStart, setNullificationStart] = useState('09:00');
+  const [nullificationEnd, setNullificationEnd] = useState('09:30');
+  const [nullificationReason, setNullificationReason] = useState('');
+  const [nullificationBusyId, setNullificationBusyId] = useState<string | null>(null);
 
   const [overtimeDirection, setOvertimeDirection] = useState<'before' | 'after'>('after');
   const [overtimeStart, setOvertimeStart] = useState('17:00');
@@ -521,6 +538,12 @@ export function EmployeePortal({
       .filter((shift) => shift.employee_id === data.profile.id && new Date(shift.end_at).getTime() >= nowMs)
       .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
   }, [data.monthShifts, data.profile.id]);
+  const nullificationShift = useMemo(
+    () => employeeShiftOptions.find((shift) => shift.id === nullificationShiftId) ?? null,
+    [employeeShiftOptions, nullificationShiftId]
+  );
+  const nullificationRequests = data.timeNullifications ?? [];
+  const pendingNullificationRequests = nullificationRequests.filter((row) => row.status === 'pending');
   const shiftById = useMemo(() => {
     const map = new Map<string, EmployeePortalData['shifts'][number]>();
     const all = [...data.monthShifts, ...data.shifts, ...data.shiftPoolShifts];
@@ -866,6 +889,70 @@ export function EmployeePortal({
       setMessage('Time-off request submitted.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit request.');
+    }
+  }
+
+  function timeOnShiftDate(shift: { start_at: string }, value: string): string {
+    const base = new Date(shift.start_at);
+    const [hours, minutes] = value.split(':').map(Number);
+    return new Date(
+      base.getFullYear(),
+      base.getMonth(),
+      base.getDate(),
+      Number.isFinite(hours) ? hours : 0,
+      Number.isFinite(minutes) ? minutes : 0,
+      0,
+      0
+    ).toISOString();
+  }
+
+  function chooseNullificationShift(shiftId: string) {
+    setNullificationShiftId(shiftId);
+    const shift = employeeShiftOptions.find((item) => item.id === shiftId);
+    if (!shift) return;
+    const start = new Date(shift.start_at);
+    const end = new Date(shift.end_at);
+    const clock = (date: Date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    const suggestedEnd = new Date(Math.min(start.getTime() + 30 * 60000, end.getTime()));
+    setNullificationStart(clock(start));
+    setNullificationEnd(clock(suggestedEnd));
+  }
+
+  async function submitNullification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setError(null);
+    if (restricted) { explainRestriction(); return; }
+    if (!nullificationShift) {
+      setError('Choose one of your shifts first.');
+      return;
+    }
+    try {
+      await onCreateTimeNullification({
+        employeeId: data.profile.id,
+        shiftId: nullificationShift.id,
+        startAt: timeOnShiftDate(nullificationShift, nullificationStart),
+        endAt: timeOnShiftDate(nullificationShift, nullificationEnd),
+        reason: nullificationReason.trim()
+      });
+      setNullificationReason('');
+      setMessage('No-task request submitted for management approval.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit the no-task request.');
+    }
+  }
+
+  async function cancelNullification(requestId: string) {
+    setMessage(null);
+    setError(null);
+    setNullificationBusyId(requestId);
+    try {
+      await onDeleteTimeNullification(requestId);
+      setMessage('No-task request cancelled.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel that request.');
+    } finally {
+      setNullificationBusyId(null);
     }
   }
 
@@ -1940,6 +2027,107 @@ export function EmployeePortal({
               </ul>
             )}
           </article>
+          </details>
+          ) : null}
+
+          {schedulingSubpage === 'requests' && showTasks ? (
+          <details className="employee-request-section">
+            <summary>No-Task Windows</summary>
+            <article className="employee-card">
+              <h2>Request No-Task Time</h2>
+              <p className="employee-card-hint">
+                Ask for a window inside one of your shifts where no tasks are assigned to you. Management approves
+                or denies it, and approved windows are blocked on the operations board.
+              </p>
+              <form className="employee-request-form" onSubmit={submitNullification}>
+                {restricted ? <p className="employee-action-locked">{restrictionReason}</p> : null}
+                <label className="full-width">
+                  Shift
+                  <select
+                    value={nullificationShiftId}
+                    onChange={(event) => chooseNullificationShift(event.target.value)}
+                    required
+                  >
+                    <option value="">Select one of your shifts</option>
+                    {employeeShiftOptions.map((shift) => (
+                      <option key={shift.id} value={shift.id}>
+                        {toReadableDate(shift.start_at)} · {toReadableTime(shift.start_at)}–{toReadableTime(shift.end_at)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Start
+                  <input
+                    type="time"
+                    value={nullificationStart}
+                    onChange={(event) => setNullificationStart(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  End
+                  <input
+                    type="time"
+                    value={nullificationEnd}
+                    onChange={(event) => setNullificationEnd(event.target.value)}
+                    required
+                  />
+                </label>
+                <label className="full-width">
+                  Reason
+                  <textarea
+                    rows={2}
+                    value={nullificationReason}
+                    onChange={(event) => setNullificationReason(event.target.value)}
+                    placeholder="For example: training session, stock count, or a meeting."
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={busy || restricted || !nullificationShiftId}
+                  aria-disabled={restricted}
+                  onClickCapture={restricted ? (event) => { event.preventDefault(); explainRestriction(); } : undefined}
+                  onClick={restricted ? explainRestriction : undefined}
+                  title={restricted ? restrictionReason : undefined}
+                >
+                  Request Window
+                </button>
+              </form>
+
+              <h3>Recent No-Task Requests</h3>
+              {nullificationRequests.length === 0 ? (
+                <p className="empty-state">No no-task requests yet.</p>
+              ) : (
+                <ul>
+                  {nullificationRequests.slice(0, 12).map((request) => (
+                    <li key={request.id}>
+                      <strong>
+                        {toReadableDate(request.start_at)} · {toReadableTime(request.start_at)}–{toReadableTime(request.end_at)}
+                      </strong>
+                      <span>Status: {statusLabel(request.status)}</span>
+                      <span>{request.reason || 'No reason provided.'}</span>
+                      {request.review_note ? <span>Review: {request.review_note}</span> : null}
+                      {request.status === 'pending' ? (
+                        <button
+                          type="button"
+                          disabled={nullificationBusyId === request.id}
+                          onClick={() => void cancelNullification(request.id)}
+                        >
+                          {nullificationBusyId === request.id ? 'Cancelling…' : 'Cancel request'}
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {pendingNullificationRequests.length > 0 ? (
+                <p className="hint">
+                  {pendingNullificationRequests.length} request
+                  {pendingNullificationRequests.length === 1 ? ' is' : 's are'} waiting for management.
+                </p>
+              ) : null}
+            </article>
           </details>
           ) : null}
 

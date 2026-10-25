@@ -25,6 +25,7 @@
           <button type="button" data-tab="overview" class="active">Overview</button>
           <button type="button" data-tab="users">Users</button>
           <button type="button" data-tab="features">Features</button>
+          <button type="button" data-tab="database">Database</button>
           <button type="button" data-tab="setup">Setup</button>
           <button type="button" data-tab="settings">Settings</button>
           <button type="button" data-tab="logs">Logs</button>
@@ -39,7 +40,7 @@
         </div>
 
         <footer class="sidebar-footer">
-          <span id="app-version">v1.0.0</span>
+          <span id="app-version">v1.0.2</span>
           <span>LAN server control</span>
         </footer>
       </aside>
@@ -209,6 +210,82 @@
               sections; existing data is kept, so turning a feature back on restores it. The server does not need
               to restart. The <code>/opsboard.html</code> kiosk hides disabled areas on its next refresh.
             </p>
+          </article>
+        </section>
+
+        <!-- Database ------------------------------------------------------ -->
+        <section class="tab" id="tab-database">
+          <header class="page-head">
+            <div>
+              <h1>Database</h1>
+              <p>Inspect and correct individual rows, or start over with a clean database.</p>
+            </div>
+            <button type="button" class="link" id="btn-db-refresh">Refresh tables</button>
+          </header>
+
+          <article class="card">
+            <div class="card-head">
+              <div><h2>Records</h2><p class="muted">Pick a table, then edit or delete one row at a time. The primary key identifies the row.</p></div>
+              <div class="db-toolbar">
+                <label class="field">
+                  <span>Table</span>
+                  <select id="db-table"></select>
+                </label>
+                <label class="field">
+                  <span>Rows per page</span>
+                  <select id="db-page-size">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <p class="hint" id="db-status">Open this tab to load the tables.</p>
+            <div class="table-wrap">
+              <table class="data-table" id="db-row-table">
+                <thead><tr><th>Actions</th></tr></thead>
+                <tbody id="db-row-body"><tr><td class="muted">No table loaded.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="db-pager">
+              <button type="button" id="btn-db-prev" disabled>Previous</button>
+              <span class="muted" id="db-range">—</span>
+              <button type="button" id="btn-db-next" disabled>Next</button>
+            </div>
+          </article>
+
+          <article class="card hidden" id="db-editor">
+            <div class="card-head">
+              <div><h2 id="db-editor-title">Edit row</h2><p class="muted" id="db-editor-subtitle"></p></div>
+              <button type="button" class="link" id="btn-db-close-editor">Close</button>
+            </div>
+            <p class="hint">Values are saved as text and cast to the column type. Type <code>NULL</code> to clear a field.</p>
+            <div class="db-fields" id="db-editor-fields"></div>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btn-db-save-row">Save row</button>
+              <button type="button" class="danger" id="btn-db-delete-row">Delete row</button>
+            </div>
+            <p class="hint" id="db-editor-status"></p>
+          </article>
+
+          <article class="card danger-card">
+            <div class="card-head">
+              <div><h2>Reset database</h2><p class="muted">Deletes every record, then rebuilds the schema, organization, default work areas and the bootstrap administrator from your server configuration.</p></div>
+            </div>
+            <ul class="db-warning">
+              <li>Stop the server first — resetting is blocked while it is running.</li>
+              <li>A safety backup is created automatically when pg_dump is available.</li>
+              <li>Employees, shifts, tasks, notes and requests cannot be recovered without a backup.</li>
+            </ul>
+            <label class="field db-confirm-field">
+              <span>Type RESET to enable the button</span>
+              <input id="db-reset-confirm" type="text" spellcheck="false" autocomplete="off" placeholder="RESET" />
+            </label>
+            <div class="row-actions">
+              <button type="button" class="danger" id="btn-db-reset" disabled>Reset database</button>
+            </div>
+            <p class="hint" id="db-reset-status"></p>
           </article>
         </section>
 

@@ -10,6 +10,7 @@ terminal:
 - test the Postgres connection and initialize the database schema
 - create the first administrator or reset a password
 - add and remove employee accounts without touching the command line
+- browse, edit and delete individual database rows, or reset the database
 - toggle scheduling, people, communication and reporting features on or off
 - edit server settings (`PORT`, `HOST`, `DATABASE_URL`, JWT secret, board token)
 - open the web app or the live board kiosk in a browser
@@ -108,6 +109,27 @@ Command-line equivalents:
 .venv/bin/python -m app.cli get-features --json
 echo '{"tasks": false}' | .venv/bin/python -m app.cli set-features
 ```
+
+## Database
+
+The **Database** tab lists every table in the `public` schema with its row count.
+Pick a table to page through its rows and use **Edit** to change one record at a
+time. Rows are targeted by their primary key; tables without a primary key are
+read-only. Values are sent to PostgreSQL as text and cast to the column type, so
+`true`, `2026-10-24T08:30:00Z` and `{"a":1}` all work. Type `NULL` (upper case)
+in a field to store an empty value; type `'NULL'` to store the literal text.
+Editing is available while the server is running, because the change is made in
+PostgreSQL itself.
+
+The **Reset database** card deletes every record and rebuilds the schema,
+organization, default work areas and the bootstrap administrator from the saved
+configuration. It refuses to run while the server is running, requires typing
+`RESET`, and writes a safety backup first when `pg_dump` is available. Reset uses
+the backend CLI, so the Python environment must already exist.
+
+The tab talks to PostgreSQL directly through the client bundled with the
+installer, and starts the bundled PostgreSQL service when the database is not
+answering.
 
 ## Server configuration
 
