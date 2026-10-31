@@ -52,7 +52,6 @@ export type ProfileRow = {
   email: string;
   full_name: string;
   helpful_info: string;
-  hourly_rate: number | null;
   role: AppRole;
   retail_chaos_stationary?: boolean;
   admin_training_only?: boolean;
@@ -87,7 +86,6 @@ export type ShiftRow = {
   clock_in_device?: string | null;
   clock_in_is_mobile?: boolean | null;
   is_unscheduled_overtime: boolean;
-  pay_multiplier: number;
   worked_minutes: number | null;
   break_minutes: number;
   is_shift_pool: boolean;

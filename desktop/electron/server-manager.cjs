@@ -576,17 +576,18 @@ class ServerManager extends EventEmitter {
     return users;
   }
 
-  async createUser({ email, name, password, role }) {
+  async createUser({ email, name, password }) {
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanName = String(name || '').trim();
-    const cleanRole = role === 'admin' ? 'admin' : 'employee';
+    // Roles are corporate-owned; the manager provisions employees only and the
+    // first-run administrator comes from Setup (cli create-admin).
     const cleanPassword = String(password || '');
     if (!cleanEmail.includes('@')) throw new Error('Enter a valid email address.');
     if (!cleanName) throw new Error('Enter the person\'s name.');
     if (cleanPassword.length < 8) throw new Error('Password must be at least 8 characters.');
     if (/[\r\n]/.test(cleanPassword)) throw new Error('Password cannot contain line breaks.');
     await this.cli(
-      ['create-user', '--email', cleanEmail, '--name', cleanName, '--role', cleanRole, '--password-stdin'],
+      ['create-user', '--email', cleanEmail, '--name', cleanName, '--role', 'employee', '--password-stdin'],
       `${cleanPassword}\n`
     );
     return this.listUsers();
@@ -613,16 +614,13 @@ class ServerManager extends EventEmitter {
     return flags;
   }
 
-  async setFeatures(patch) {
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-      throw new Error('Feature changes must be an object.');
-    }
-    const entries = Object.entries(patch);
-    if (entries.length === 0) throw new Error('Toggle at least one feature first.');
-    const output = await this.cli(['set-features'], `${JSON.stringify(patch)}\n`);
-    const flags = parseTrailingJson(output);
-    if (!flags || typeof flags !== 'object') throw new Error('Feature update did not return flags.');
-    return flags;
+  async setFeatures() {
+    // Feature flags are corporate-owned. Kept so an older renderer or script
+    // gets a clear explanation instead of silently rewriting the organization.
+    throw new Error(
+      'Feature flags are managed in RealtimeCorp. Change them under Policies → ' +
+        'Site configuration; this server applies the change within seconds.'
+    );
   }
 
   async runSystemCommand(command, args) {

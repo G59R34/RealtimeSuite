@@ -111,7 +111,6 @@ export function EmployeeRoster({
               <th>Status</th>
               <th>Assigned Tasks</th>
               <th>Worked Hrs (Day)</th>
-              <th>Hourly Rate</th>
               <th>Helpful Info</th>
             </tr>
           </thead>
@@ -142,7 +141,6 @@ export function EmployeeRoster({
                   </td>
                   <td>{taskCountByEmployee.get(employee.id) ?? 0}</td>
                   <td>{((workedMinutesByEmployee.get(employee.id) ?? 0) / 60).toFixed(2)}</td>
-                  <td>{employee.hourly_rate == null ? '-' : `$${Number(employee.hourly_rate).toFixed(2)}`}</td>
                   <td>{employee.helpful_info?.trim() ? employee.helpful_info : '-'}</td>
                 </tr>
               );

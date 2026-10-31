@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from . import corp_commands, corp_sync, rtlink_bridge
 from .config import settings
 from .db import apply_additions, apply_schema, ensure_seed, session_scope
 from .github_sync import sync_pull_requests
@@ -19,7 +20,9 @@ from .routers import (
     auth,
     board_notes,
     comms,
+    corp_sync as corp_sync_router,
     discipline,
+    rtlink_sync as rtlink_sync_router,
     employees,
     integrations,
     nullifications,
@@ -98,11 +101,17 @@ async def lifespan(_: FastAPI):
     if settings.github_enabled:
         github_thread = threading.Thread(target=_github_loop, name="github-sync", daemon=True)
         github_thread.start()
+    corp_sync.start()
+    corp_commands.start()
+    rtlink_bridge.start()
     yield
     _stop.set()
+    rtlink_bridge.stop()
+    corp_commands.stop()
+    corp_sync.stop()
 
 
-app = FastAPI(title="RealtimeSuite", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="RealtimeSuite", version=settings.app_version, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -137,6 +146,8 @@ for router in (
     training.router,
     discipline.router,
     integrations.router,
+    corp_sync_router.router,
+    rtlink_sync_router.router,
     reports.router,
     opsboard.router,
     board_notes.router,

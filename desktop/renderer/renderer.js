@@ -437,25 +437,12 @@ async function loadUsers() {
 
 // ------------------------------------------------------------ features tab
 
-function featureChanges() {
-  if (!state.features || !state.featureDraft) return {};
-  const patch = {};
-  for (const [key, value] of Object.entries(state.featureDraft)) {
-    if (state.features[key] !== value) patch[key] = value;
-  }
-  return patch;
-}
-
 function updateFeatureSummary() {
+  // Feature flags are corporate-owned: the manager never edits them, so there is
+  // never an unsaved change to announce.
   const node = $('feature-summary');
-  const changes = Object.keys(featureChanges()).length;
-  if (changes === 0) {
-    node.className = 'banner hidden';
-    node.textContent = '';
-    return;
-  }
-  node.className = 'banner warn';
-  node.textContent = `${changes} unsaved change${changes === 1 ? '' : 's'}. Save to apply them to RealtimeSuite.`;
+  node.className = 'banner hidden';
+  node.textContent = '';
 }
 
 function renderFeatures() {
@@ -488,7 +475,6 @@ function renderFeatures() {
       const row = document.createElement('div');
       row.className = 'feature-row';
       row.dataset.key = key;
-      if (state.features && state.features[key] !== draft[key]) row.classList.add('changed');
 
       const text = document.createElement('div');
       const title = document.createElement('strong');
@@ -499,17 +485,13 @@ function renderFeatures() {
 
       const label = document.createElement('label');
       label.className = 'switch';
-      label.title = `Toggle ${info.label || key}`;
+      label.title = `${info.label || key} is set in RealtimeCorp`;
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = Boolean(draft[key]);
+      input.disabled = true;
       input.setAttribute('aria-label', info.label || key);
       const track = document.createElement('span');
-      input.addEventListener('change', () => {
-        state.featureDraft[key] = input.checked;
-        row.classList.toggle('changed', state.features ? state.features[key] !== input.checked : true);
-        updateFeatureSummary();
-      });
       label.append(input, track);
 
       row.append(text, label);
@@ -1108,7 +1090,6 @@ $('btn-create-user').addEventListener('click', () => withBusy($('btn-create-user
   const payload = {
     name: $('user-name').value.trim(),
     email: $('user-email').value.trim(),
-    role: $('user-role').value,
     password: $('user-password').value
   };
   if (!payload.name) throw new Error('Enter the person\'s full name.');
@@ -1121,30 +1102,9 @@ $('btn-create-user').addEventListener('click', () => withBusy($('btn-create-user
   $('user-name').value = '';
   $('user-email').value = '';
   $('user-password').value = '';
-  $('user-role').value = 'employee';
-  $('user-list-status').textContent = `Created ${payload.email.toLowerCase()}. Share the temporary password with them.`;
+  $('user-list-status').textContent = `Created ${payload.email.toLowerCase()}. Share the temporary password with them; assign a role in RealtimeCorp.`;
   banner(`Account created for ${payload.email.toLowerCase()}.`, 'ok');
 }));
-
-$('btn-feature-save').addEventListener('click', () => withBusy($('btn-feature-save'), 'Saving...', async () => {
-  const patch = featureChanges();
-  if (Object.keys(patch).length === 0) {
-    banner('No feature changes to save.', 'ok');
-    return;
-  }
-  const result = await api.setFeatures(patch);
-  if (!result.ok) throw new Error(result.error);
-  state.features = result.flags;
-  state.featureDraft = { ...result.flags };
-  renderFeatures();
-  banner(`Saved ${Object.keys(patch).length} feature change${Object.keys(patch).length === 1 ? '' : 's'}. Reload RealtimeSuite to see them.`, 'ok');
-}));
-
-$('btn-feature-reset').addEventListener('click', () => {
-  if (!state.featureSchema) return;
-  state.featureDraft = { ...state.featureSchema.defaults };
-  renderFeatures();
-});
 
 $('btn-clear-logs').addEventListener('click', async () => {
   await api.clearLogs();

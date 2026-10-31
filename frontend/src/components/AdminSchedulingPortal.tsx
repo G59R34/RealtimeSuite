@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type {
   DisciplineActionRow,
@@ -26,6 +26,8 @@ import type {
 import { toTimeHHMM } from '../lib/time';
 import { DEFAULT_FEATURES } from '../lib/features';
 import type { FeatureFlags } from '../lib/features';
+import { fetchCorpIntegrationStatus } from '../lib/api';
+import type { CorpIntegrationStatus } from '../lib/api';
 
 type AdminSchedulingPortalProps = {
   employees: ProfileRow[];
@@ -180,7 +182,6 @@ type AdminSchedulingPortalProps = {
     reviewNotes: string;
     reviewerId: string;
   }) => Promise<void>;
-  onUpdateEmployeePayRate: (employeeId: string, hourlyRate: number | null) => Promise<void>;
   onCreateEmployeeAccount: (payload: {
     email: string;
     password: string;
@@ -204,7 +205,7 @@ type CalendarCell = {
 };
 
 type ScheduleCode = ExceptionCode | 'ATO';
-type SchedulingSubpage = 'schedule' | 'operations' | 'requests' | 'payroll' | 'hiring';
+type SchedulingSubpage = 'schedule' | 'operations' | 'requests' | 'compensation' | 'hiring';
 type ShiftTemplateInput = {
   id: string;
   startTime: string;
@@ -212,6 +213,26 @@ type ShiftTemplateInput = {
   headcount: string;
   breakMinutes: string;
 };
+
+function SchedulingCardHead({
+  title,
+  hint,
+  badge
+}: {
+  title: string;
+  hint: string;
+  badge?: string;
+}) {
+  return (
+    <header className="scheduling-card-head">
+      <div className="scheduling-card-head-text">
+        <h2>{title}</h2>
+        <p>{hint}</p>
+      </div>
+      {badge ? <span className="scheduling-card-badge">{badge}</span> : null}
+    </header>
+  );
+}
 
 const WEEKDAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const CLOCK_IN_BUFFER_MINUTES = 5;
@@ -363,7 +384,8 @@ function parseDisciplineSeverity(value: string, fallback: DisciplineSeverity): D
 
 function parseDisciplinePunishmentType(value: string, fallback: DisciplinePunishmentType): DisciplinePunishmentType {
   const candidate = value.trim().toLowerCase();
-  const allowed: DisciplinePunishmentType[] = ['none', 'pay_rate_reduction', 'unpaid_suspension', 'probation'];
+  // Pay-rate reductions are a compensation change, so only RealtimeCorp makes them.
+  const allowed: DisciplinePunishmentType[] = ['none', 'unpaid_suspension', 'probation'];
   return allowed.includes(candidate as DisciplinePunishmentType) ? (candidate as DisciplinePunishmentType) : fallback;
 }
 
@@ -412,7 +434,6 @@ export function AdminSchedulingPortal({
   onApplyDisciplineAction,
   onRevokeDisciplineAction,
   onUpdateDisciplineAction,
-  onUpdateEmployeePayRate,
   onCreateEmployeeAccount,
   onSendOnboardingEmail,
 }: AdminSchedulingPortalProps) {
@@ -489,7 +510,8 @@ export function AdminSchedulingPortal({
 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [payRateDrafts, setPayRateDrafts] = useState<Record<string, string>>({});
+  const [corpStatus, setCorpStatus] = useState<CorpIntegrationStatus | null>(null);
+  const [corpStatusError, setCorpStatusError] = useState<string | null>(null);
   const showSchedulePage = enabledFeatures.shifts !== false;
   const showOperationsPage = enabledFeatures.shifts !== false || enabledFeatures.tasks !== false;
   const showRequestsPage =
@@ -497,13 +519,13 @@ export function AdminSchedulingPortal({
     enabledFeatures.exceptions !== false ||
     enabledFeatures.overtime !== false ||
     enabledFeatures.shift_swaps !== false;
-  const showPayrollPage = enabledFeatures.payroll !== false;
+  const showCompensationPage = enabledFeatures.payroll !== false;
   const showHiringPage = true;
   const availableSubpages: SchedulingSubpage[] = [
     ...(showSchedulePage ? ['schedule' as const] : []),
     ...(showOperationsPage ? ['operations' as const] : []),
     ...(showRequestsPage ? ['requests' as const] : []),
-    ...(showPayrollPage ? ['payroll' as const] : []),
+    ...(showCompensationPage ? ['compensation' as const] : []),
     ...(showHiringPage ? ['hiring' as const] : [])
   ];
   const [activeSubpage, setActiveSubpage] = useState<SchedulingSubpage>(availableSubpages[0] ?? 'schedule');
@@ -513,7 +535,7 @@ export function AdminSchedulingPortal({
       setActiveSubpage(availableSubpages[0] ?? 'operations');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubpage, showSchedulePage, showOperationsPage, showRequestsPage, showPayrollPage, showHiringPage]);
+  }, [activeSubpage, showSchedulePage, showOperationsPage, showRequestsPage, showCompensationPage, showHiringPage]);
   const [onboardingFullName, setOnboardingFullName] = useState('');
   const [onboardingEmail, setOnboardingEmail] = useState('');
   const [onboardingTempPassword, setOnboardingTempPassword] = useState('');
@@ -543,12 +565,20 @@ export function AdminSchedulingPortal({
   }, [selectedDate]);
 
   useEffect(() => {
-    const next: Record<string, string> = {};
-    for (const employee of employees) {
-      next[employee.id] = employee.hourly_rate == null ? '' : String(employee.hourly_rate);
-    }
-    setPayRateDrafts(next);
-  }, [employees]);
+    // Pay lives in RealtimeCorp; this panel only reports how the channel is doing.
+    if (activeSubpage !== 'compensation' || corpStatus) return;
+    let cancelled = false;
+    fetchCorpIntegrationStatus()
+      .then((status) => {
+        if (!cancelled) setCorpStatus(status);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setCorpStatusError(err instanceof Error ? err.message : 'Could not read corporate sync status.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSubpage, corpStatus]);
 
   const employeeById = useMemo(() => {
     return new Map(employees.map((employee) => [employee.id, employee]));
@@ -1239,7 +1269,7 @@ export function AdminSchedulingPortal({
     const nextSeverityRaw = window.prompt('Severity: warning|serious|final', action.severity);
     if (nextSeverityRaw === null) return;
     const nextPunishmentTypeRaw = window.prompt(
-      'Punishment: none|pay_rate_reduction|unpaid_suspension|probation',
+      'Punishment: none|unpaid_suspension|probation',
       action.punishment_type
     );
     if (nextPunishmentTypeRaw === null) return;
@@ -1304,59 +1334,6 @@ export function AdminSchedulingPortal({
     return [...disciplineActions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [disciplineActions]);
 
-  const payrollRows = useMemo(() => {
-    return employees
-      .map((employee) => {
-        const employeeShifts = monthShifts.filter((shift) => shift.employee_id === employee.id);
-        const workedMinutes = employeeShifts.reduce((total, shift) => total + (shift.worked_minutes ?? 0), 0);
-        const hourlyRate = employee.hourly_rate ?? 0;
-        const grossPay = employeeShifts.reduce((total, shift) => {
-          const minutes = shift.worked_minutes ?? 0;
-          const multiplier = Number.isFinite(shift.pay_multiplier) ? shift.pay_multiplier : 1;
-          return total + (minutes / 60) * hourlyRate * multiplier;
-        }, 0);
-        return {
-          employeeId: employee.id,
-          employeeName: employee.full_name || employee.email,
-          hourlyRate,
-          workedMinutes,
-          grossPay
-        };
-      })
-      .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
-  }, [employees, monthShifts]);
-  const totalWorkedHours = payrollRows.reduce((total, row) => total + row.workedMinutes / 60, 0);
-  const totalGrossPay = payrollRows.reduce((total, row) => total + row.grossPay, 0);
-
-  async function savePayRate(employeeId: string) {
-    setMessage(null);
-    setError(null);
-    const raw = (payRateDrafts[employeeId] ?? '').trim();
-
-    if (!raw) {
-      try {
-        await onUpdateEmployeePayRate(employeeId, null);
-        setMessage('Employee pay rate cleared.');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update pay rate.');
-      }
-      return;
-    }
-
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      setError('Hourly rate must be a positive number.');
-      return;
-    }
-
-    try {
-      await onUpdateEmployeePayRate(employeeId, parsed);
-      setMessage('Employee pay rate updated.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update pay rate.');
-    }
-  }
-
 
   function generateTempPassword() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*';
@@ -1420,13 +1397,57 @@ export function AdminSchedulingPortal({
 
 
 
+  const shellRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    shellRef.current?.scrollTo({ top: 0 });
+  }, [activeSubpage]);
+
+  const pendingExceptionCount = exceptionRequests.filter(
+    (request) => request.status === 'submitted' || request.status === 'under_review'
+  ).length;
+  const pendingOvertimeCount = overtimeRequests.filter((request) => request.status === 'pending').length;
+  const pendingSwapCount = shiftSwapRequests.filter(
+    (request) => request.status === 'pending_admin' || request.status === 'open'
+  ).length;
+  const pendingTimeOffCount = timeOffRequests.filter((request) => request.status === 'pending').length;
+  const pendingReviewCount =
+    pendingExceptionCount + pendingOvertimeCount + pendingSwapCount + pendingTimeOffCount;
+
   return (
-    <section className="scheduling-admin-shell">
-      <header className="scheduling-admin-topnav">
+    <section ref={shellRef} className="scheduling-admin-shell">
+      <header className="scheduling-admin-hero">
+        <div className="scheduling-admin-hero-copy">
+          <span className="scheduling-admin-eyebrow">Workforce planning</span>
+          <h1>Scheduling</h1>
+          <p>Build the monthly schedule, fill coverage gaps, and clear requests from one place.</p>
+        </div>
+        <div className="scheduling-admin-stat-row">
+          <div className="scheduling-admin-stat">
+            <span>Month</span>
+            <strong>{monthTitle(selectedDate)}</strong>
+          </div>
+          <div className="scheduling-admin-stat">
+            <span>Employees</span>
+            <strong>{employees.length}</strong>
+          </div>
+          <div className="scheduling-admin-stat">
+            <span>Day shifts</span>
+            <strong>{shifts.length}</strong>
+          </div>
+          <div className={`scheduling-admin-stat ${pendingReviewCount > 0 ? 'needs-attention' : ''}`}>
+            <span>Awaiting review</span>
+            <strong>{pendingReviewCount}</strong>
+          </div>
+        </div>
+      </header>
+
+      <nav className="scheduling-admin-topnav" aria-label="Scheduling sections">
         {showSchedulePage ? (
           <button
             type="button"
             className={activeSubpage === 'schedule' ? 'active' : ''}
+            aria-current={activeSubpage === 'schedule' ? 'page' : undefined}
             onClick={() => setActiveSubpage('schedule')}
           >
             Schedule
@@ -1436,45 +1457,54 @@ export function AdminSchedulingPortal({
           <button
             type="button"
             className={activeSubpage === 'operations' ? 'active' : ''}
+            aria-current={activeSubpage === 'operations' ? 'page' : undefined}
             onClick={() => setActiveSubpage('operations')}
           >
             Operations
+            <span className="scheduling-admin-tab-count">{shifts.length}</span>
           </button>
         ) : null}
         {showRequestsPage ? (
           <button
             type="button"
             className={activeSubpage === 'requests' ? 'active' : ''}
+            aria-current={activeSubpage === 'requests' ? 'page' : undefined}
             onClick={() => setActiveSubpage('requests')}
           >
             Requests
+            <span className="scheduling-admin-tab-count">{pendingReviewCount}</span>
           </button>
         ) : null}
-        {showPayrollPage ? (
+        {showCompensationPage ? (
           <button
             type="button"
-            className={activeSubpage === 'payroll' ? 'active' : ''}
-            onClick={() => setActiveSubpage('payroll')}
+            className={activeSubpage === 'compensation' ? 'active' : ''}
+            aria-current={activeSubpage === 'compensation' ? 'page' : undefined}
+            onClick={() => setActiveSubpage('compensation')}
           >
-            Payroll
+            Compensation
           </button>
         ) : null}
         {showHiringPage ? (
           <button
             type="button"
             className={activeSubpage === 'hiring' ? 'active' : ''}
+            aria-current={activeSubpage === 'hiring' ? 'page' : undefined}
             onClick={() => setActiveSubpage('hiring')}
           >
             Hiring
           </button>
         ) : null}
-        </header>
+      </nav>
 
-      <section className="scheduling-subpage-grid">
+      <section className={`scheduling-admin-body subpage-${activeSubpage}`}>
       {activeSubpage === 'schedule' ? (
       <>
       <article className="scheduling-admin-card">
-        <h2>Shift Intelligence Snapshot</h2>
+        <SchedulingCardHead
+          title="Shift Intelligence Snapshot"
+          hint="Fatigue risk and coverage gaps for the selected month."
+        />
         {!shiftIntelligence ? (
           <p className="empty-state">Shift intelligence is unavailable. Run migration 049 and refresh.</p>
         ) : (
@@ -1509,7 +1539,10 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card schedule-card">
-        <h2>Employee Monthly Schedule ({monthTitle(selectedDate)})</h2>
+        <SchedulingCardHead
+          title={`Employee Monthly Schedule (${monthTitle(selectedDate)})`}
+          hint="Pick an employee, then click a day to edit that day's shift."
+        />
         <div className="admin-schedule-head">
           <label>
             Employee
@@ -1606,7 +1639,11 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Shifts For {selectedDate}</h2>
+        <SchedulingCardHead
+          title={`Shifts For ${selectedDate}`}
+          hint="Everything scheduled on the selected day, including open pool shifts."
+          badge={`${shifts.length} ${shifts.length === 1 ? 'shift' : 'shifts'}`}
+        />
         <div className="scheduling-table-wrap">
           <table>
             <thead>
@@ -1663,7 +1700,10 @@ export function AdminSchedulingPortal({
       {activeSubpage === 'operations' ? (
       <>
       <article className="scheduling-admin-card">
-        <h2>Scheduling Admin Shift Assignment / Edit</h2>
+        <SchedulingCardHead
+          title="Shift Assignment / Edit"
+          hint="Update one existing shift or create a new one for any employee."
+        />
         <form className="scheduling-admin-form" onSubmit={submitShift}>
           <label>
             Mode
@@ -1773,7 +1813,10 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Auto Assign Missing Shifts ({selectedDate})</h2>
+        <SchedulingCardHead
+          title={`Auto Assign Missing Shifts (${selectedDate})`}
+          hint="Fill open days round-robin across active work areas with the timing below."
+        />
         <form className="scheduling-admin-form" onSubmit={submitAutoAssign}>
           <label>
             Default Area
@@ -1904,57 +1947,76 @@ export function AdminSchedulingPortal({
       </>
       ) : null}
 
-      {activeSubpage === 'payroll' ? (
+      {activeSubpage === 'compensation' ? (
       <article className="scheduling-admin-card">
-        <h2>Payroll Summary ({monthTitle(selectedDate)})</h2>
-        <div className="scheduling-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Employee</th>
-                <th>Hourly Rate</th>
-                <th>Worked Hours</th>
-                <th>Gross Pay</th>
-                <th>Save</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payrollRows.map((row) => (
-                <tr key={row.employeeId}>
-                  <td>{row.employeeName}</td>
-                  <td>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={payRateDrafts[row.employeeId] ?? ''}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setPayRateDrafts((current) => ({ ...current, [row.employeeId]: value }));
-                      }}
-                    />
-                  </td>
-                  <td>{(row.workedMinutes / 60).toFixed(2)}</td>
-                  <td>{toCurrency(row.grossPay)}</td>
-                  <td>
-                    <button type="button" onClick={() => void savePayRate(row.employeeId)} disabled={busy}>
-                      Save Rate
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SchedulingCardHead
+          title="Compensation"
+          hint="Where pay changes come from and their corporate sync status."
+        />
         <p className="empty-state">
-          Total Worked Hours: {totalWorkedHours.toFixed(2)} | Estimated Gross Payroll: {toCurrency(totalGrossPay)}
+          Pay rates, payroll totals and shift pay multipliers are owned by RealtimeCorp. They are never stored in this
+          site's screens: change them in the corporate console under People &amp; HR or Payroll, and this server applies
+          the change automatically.
         </p>
+
+        {corpStatusError ? <p className="empty-state">{corpStatusError}</p> : null}
+
+        {corpStatus ? (
+          <ul className="empty-state">
+            <li>Corporate connection: {corpStatus.configured ? 'connected' : 'not configured'}</li>
+            <li>
+              Last snapshot:{' '}
+              {corpStatus.last_success_at
+                ? new Date(corpStatus.last_success_at).toLocaleString()
+                : 'never'}
+            </li>
+            <li>
+              Command polling:{' '}
+              {corpStatus.commands?.enabled
+                ? `every ${corpStatus.commands.pollSeconds}s`
+                : 'disabled until the site is connected to RealtimeCorp'}
+            </li>
+            <li>
+              Applied changes: {corpStatus.commands?.applied ?? 0} · failed:{' '}
+              {corpStatus.commands?.failed ?? 0}
+            </li>
+            {corpStatus.last_error ? <li>Last error: {corpStatus.last_error}</li> : null}
+          </ul>
+        ) : null}
+
+        {corpStatus?.recentCommands?.length ? (
+          <div className="scheduling-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Corporate change</th>
+                  <th>Target</th>
+                  <th>Status</th>
+                  <th>Applied</th>
+                </tr>
+              </thead>
+              <tbody>
+                {corpStatus.recentCommands.slice(0, 10).map((row) => (
+                  <tr key={row.command_id}>
+                    <td>{row.kind.replace(/_/g, ' ')}</td>
+                    <td>{row.target_id ?? 'Site'}</td>
+                    <td>{row.status}</td>
+                    <td>{row.applied_at ? new Date(row.applied_at).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </article>
       ) : null}
 
       {activeSubpage === 'hiring' ? (
       <article className="scheduling-admin-card schedule-card">
-        <h2>Employee Account Provisioning</h2>
+        <SchedulingCardHead
+          title="Employee Account Provisioning"
+          hint="Create the login, then email the employee their temporary password."
+        />
         <form className="scheduling-admin-form" onSubmit={submitOnboardingAccount}>
           <label>
             Full Name
@@ -2007,7 +2069,11 @@ export function AdminSchedulingPortal({
       {activeSubpage === 'requests' ? (
       <>
       <article className="scheduling-admin-card">
-        <h2>Exception Requests</h2>
+        <SchedulingCardHead
+          title="Exception Requests"
+          hint="Log an attendance exception or clear the review queue."
+          badge={`${pendingExceptionCount} pending`}
+        />
         <form className="scheduling-admin-form" onSubmit={submitException}>
           <label>
             Employee
@@ -2137,7 +2203,10 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Assign Overtime</h2>
+        <SchedulingCardHead
+          title="Assign Overtime"
+          hint="Offer overtime directly to one employee for a specific window."
+        />
         <form className="scheduling-admin-form" onSubmit={submitAssignOvertime}>
           <label>
             Employee
@@ -2180,7 +2249,11 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Overtime Requests (All)</h2>
+        <SchedulingCardHead
+          title="Overtime Requests"
+          hint="Approve, deny and track every overtime request and assignment."
+          badge={`${pendingOvertimeCount} pending`}
+        />
         {allOvertimeRequests.length === 0 ? (
           <p className="empty-state">No overtime requests.</p>
         ) : (
@@ -2232,7 +2305,11 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Shift Swap Requests (All)</h2>
+        <SchedulingCardHead
+          title="Shift Swap Requests"
+          hint="Employee-to-employee swaps that are waiting on a manager decision."
+          badge={`${pendingSwapCount} pending`}
+        />
         {allShiftSwapRequests.length === 0 ? (
           <p className="empty-state">No shift swap requests.</p>
         ) : (
@@ -2282,7 +2359,10 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Employee Write-Ups / Punishments</h2>
+        <SchedulingCardHead
+          title="Employee Write-Ups"
+          hint="Issue discipline and apply pay, suspension or probation consequences."
+        />
         <form className="scheduling-admin-form" onSubmit={submitDisciplineAction}>
           <label>
             Employee
@@ -2309,7 +2389,6 @@ export function AdminSchedulingPortal({
               onChange={(event) => setDisciplinePunishmentType(event.target.value as DisciplinePunishmentType)}
             >
               <option value="none">None</option>
-              <option value="pay_rate_reduction">Pay Rate Reduction ($/hr)</option>
               <option value="unpaid_suspension">Unpaid Suspension (days)</option>
               <option value="probation">Probation (days)</option>
             </select>
@@ -2387,7 +2466,11 @@ export function AdminSchedulingPortal({
       </article>
 
       <article className="scheduling-admin-card">
-        <h2>Time-Off Requests (All)</h2>
+        <SchedulingCardHead
+          title="Time-Off Requests"
+          hint="Approve time off; approving clears the employee's schedule for those days."
+          badge={`${pendingTimeOffCount} pending`}
+        />
         {allTimeOffRequests.length === 0 ? (
           <p className="empty-state">No time-off requests.</p>
         ) : (

@@ -11,8 +11,9 @@ from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# Pay is corporate-owned; the session payload never carries an hourly rate.
 PROFILE_COLUMNS = """
-  id, email, full_name, helpful_info, hourly_rate, role::text as role,
+  id, email, full_name, helpful_info, role::text as role,
   retail_chaos_stationary, admin_training_only, is_training_manager,
   onboarding_started_at, onboarding_completed_at, onboarding_completed_version,
   onboarding_answers, created_at, updated_at
@@ -32,8 +33,6 @@ class ChangePasswordPayload(BaseModel):
 def serialize_profile(row) -> dict:
     data = dict(row)
     data["id"] = str(data["id"])
-    rate = data.get("hourly_rate")
-    data["hourly_rate"] = float(rate) if rate is not None else None
     return data
 
 

@@ -51,6 +51,11 @@ def _read_password(password: str | None, password_stdin: bool) -> str:
 
 
 def _create_admin(email: str, password: str, name: str) -> None:
+    if _has_admin():
+        raise SystemExit(
+            "This site already has an administrator; that account manages it. "
+            + CORP_ROLE_MESSAGE
+        )
     with session_scope() as session:
         existing = session.execute(
             text("select id from public.profiles where lower(email) = lower(:email)"),
@@ -62,11 +67,28 @@ def _create_admin(email: str, password: str, name: str) -> None:
     print(f"Created administrator {email}")
 
 
+CORP_ROLE_MESSAGE = (
+    "Roles and permissions are managed in RealtimeCorp. "
+    "Create an employee here, then grant the role from the corporate console."
+)
+
+
+def _has_admin() -> bool:
+    with session_scope() as session:
+        return bool(
+            session.execute(text("select 1 from public.profiles where role = 'admin' limit 1")).scalar()
+        )
+
+
 def _create_user(email: str, password: str, name: str, role: str) -> None:
     if role not in {"admin", "employee"}:
         raise SystemExit("Role must be admin or employee.")
     if "@" not in email:
         raise SystemExit("Enter a valid email address.")
+    if role == "admin" and _has_admin():
+        # The first administrator is the only local role assignment; every later
+        # promotion is a corporate decision (see AGENTS.md).
+        raise SystemExit(CORP_ROLE_MESSAGE)
     try:
         user_id = create_user(email, password, name, role=role)
     except ValueError as exc:
@@ -172,35 +194,17 @@ def _get_features(as_json: bool) -> None:
 
 
 def _set_features(raw: str) -> None:
+    # Feature flags are corporate-owned; the console applies them through a
+    # `set_feature_flags` command. Kept as a command so existing scripts fail
+    # loudly instead of silently pretending to save.
     try:
-        payload = json.loads(raw)
+        json.loads(raw)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Invalid feature JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise SystemExit("Feature payload must be a JSON object.")
-    unknown = sorted(set(payload) - set(DEFAULT_FEATURE_FLAGS))
-    if unknown:
-        raise SystemExit(f"Unknown feature flags: {', '.join(unknown)}")
-    flags = {key: bool(value) for key, value in payload.items() if key in DEFAULT_FEATURE_FLAGS}
-    if not flags:
-        raise SystemExit("No feature flags supplied.")
-    with session_scope() as session:
-        org = get_organization(session)
-        config: dict[str, Any] = dict(org.get("experience_builder_config") or {})
-        config["feature_flags"] = {**_features_payload(session), **flags}
-        session.execute(
-            text(
-                """
-                update public.organizations
-                set experience_builder_config = cast(:config as jsonb),
-                    updated_at = now()
-                where id = :id
-                """
-            ),
-            {"config": json.dumps(config), "id": org["id"]},
-        )
-        result = _features_payload(session)
-    print(json.dumps(result))
+    raise SystemExit(
+        "Feature flags are managed in RealtimeCorp. Turn them on or off under "
+        "Policies → Site configuration; this site applies the change within seconds."
+    )
 
 
 def _set_org_name(raw: str) -> None:
@@ -257,9 +261,24 @@ def main() -> None:
     org_name = sub.add_parser("set-org-name", help="Rename the organization shown across the app")
     org_name.add_argument("--name", required=True)
 
+    sub.add_parser("corp-sync", help="Push a snapshot to RealtimeCorp now")
+    sub.add_parser(
+        "corp-commands", help="Show corporate-owned changes applied to this site"
+    )
+    sub.add_parser("corp-apply", help="Apply pending RealtimeCorp changes now")
     sub.add_parser("init", help="Create the schema, organization and default work areas")
     sub.add_parser("describe-features", help="Print feature flag defaults as JSON")
     sub.add_parser("feature-schema", help="Print feature defaults, groups and labels as JSON")
+    sub.add_parser(
+        "corp-site-id", help="Print a new corporate site id and the env lines to paste"
+    )
+    sub.add_parser("rtlink-sync", help="Push an RTLink snapshot now")
+    sub.add_parser("rtlink-pull", help="Apply pending RTLink employee actions now")
+    sub.add_parser("rtlink-actions", help="Show employee actions applied from RTLink")
+    sub.add_parser(
+        "rtlink-site-id",
+        help="Print a new RTLink site id and the env lines to paste",
+    )
 
     args = parser.parse_args()
 
@@ -268,6 +287,18 @@ def main() -> None:
         return
     if args.command == "feature-schema":
         print(json.dumps({"defaults": DEFAULT_FEATURE_FLAGS, "groups": FEATURE_GROUPS, "meta": FEATURE_META}))
+        return
+    if args.command == "corp-site-id":
+        from uuid import uuid4
+
+        site_id = uuid4()
+        print(site_id)
+        print()
+        print("Add these to backend/.env, using the company id shown in RealtimeCorp:")
+        print(f"CORP_SITE_ID={site_id}")
+        print("CORP_COMPANY_ID=<company id from RealtimeCorp → Sites & locations>")
+        print("CORP_SUPABASE_URL=https://<project>.supabase.co")
+        print("CORP_SUPABASE_SERVICE_ROLE_KEY=<service_role key>")
         return
 
     apply_schema()
@@ -290,6 +321,60 @@ def main() -> None:
         return
     if args.command == "set-org-name":
         _set_org_name(args.name)
+        return
+    if args.command == "rtlink-site-id":
+        from uuid import uuid4
+
+        site_id = uuid4()
+        print(site_id)
+        print()
+        print("Add these to backend/.env:")
+        print(f"RTLINK_SITE_ID={site_id}")
+        print("RTLINK_SUPABASE_URL=https://<project>.supabase.co")
+        print("RTLINK_SUPABASE_SERVICE_ROLE_KEY=<service_role key>")
+        print("RTLINK_SITE_NAME=<the site name employees should see>")
+        return
+    if args.command == "rtlink-sync":
+        from .rtlink_bridge import sync_now
+
+        result = sync_now("cli")
+        print(json.dumps(result, indent=2, default=str))
+        if not result.get("ok"):
+            raise SystemExit(1)
+        return
+    if args.command == "rtlink-pull":
+        from .rtlink_bridge import run_once
+
+        result = run_once("cli")
+        print(json.dumps(result, indent=2, default=str))
+        if not result.get("ok"):
+            raise SystemExit(1)
+        return
+    if args.command == "rtlink-actions":
+        from .rtlink_bridge import recent, status
+
+        print(json.dumps({"status": status(), "recent": recent(50)}, indent=2, default=str))
+        return
+    if args.command == "corp-sync":
+        from .corp_sync import sync_now
+
+        result = sync_now("cli")
+        print(json.dumps(result, indent=2, default=str))
+        if not result.get("ok"):
+            raise SystemExit(1)
+        return
+    if args.command == "corp-commands":
+        from .corp_commands import recent, status
+
+        print(json.dumps({"status": status(), "recent": recent(50)}, indent=2, default=str))
+        return
+    if args.command == "corp-apply":
+        from .corp_commands import run_once
+
+        result = run_once("cli")
+        print(json.dumps(result, indent=2, default=str))
+        if not result.get("ok"):
+            raise SystemExit(1)
         return
 
     password = _read_password(args.password, getattr(args, "password_stdin", False))

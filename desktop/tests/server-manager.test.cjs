@@ -360,7 +360,16 @@ test('user creation validates input before touching the environment', async () =
   await assert.rejects(manager.createUser({ email: 'a@b.c', name: '', password: 'longenough' }), /name/i);
   await assert.rejects(manager.createUser({ email: 'a@b.c', name: 'A', password: 'short' }), /8 characters/i);
   await assert.rejects(manager.deleteUser({ email: '' }), /account/i);
-  await assert.rejects(manager.setFeatures({}), /at least one/i);
+});
+
+test('corporate-owned controls refuse local writes', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+
+  // Feature flags and roles belong to RealtimeCorp; the manager explains that
+  // instead of writing them.
+  await assert.rejects(manager.setFeatures({ tasks: false }), /managed in RealtimeCorp/i);
 });
 
 test('custom env file keeps packaged installs out of the read-only app bundle', async () => {

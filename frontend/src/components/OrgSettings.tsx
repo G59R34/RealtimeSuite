@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import type { OrganizationExperienceBuilderConfig, OrganizationSettings, TimelineZoomHours } from '../types';
-import { TIMELINE_ZOOM_LEVELS } from '../types';
+import type { OrganizationExperienceBuilderConfig, OrganizationSettings } from '../types';
 import { ClockInLocationsSettings } from './ClockInLocationsSettings';
 
 type OrgSettingsProps = {
@@ -19,12 +18,6 @@ type OrgSettingsProps = {
     loginHeading: string;
     loginSubheading: string;
     experienceBuilderConfig: OrganizationExperienceBuilderConfig;
-    enableRetailFloorSimulation: boolean;
-    enableExtendedLeaveLock: boolean;
-    extendedLeaveThresholdDays: number;
-    enableAdminRealtimeNotifications: boolean;
-    defaultTimelineWindowHours: TimelineZoomHours;
-    defaultShiftBreakMinutes: number;
   }) => Promise<void>;
 };
 
@@ -37,8 +30,6 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
   const [loginLogoUrl, setLoginLogoUrl] = useState('');
   const [loginBackgroundImageUrl, setLoginBackgroundImageUrl] = useState('');
   const [loginAnnouncement, setLoginAnnouncement] = useState('');
-  const [timelineWindowHours, setTimelineWindowHours] = useState<TimelineZoomHours>(8);
-  const [defaultBreakMinutes, setDefaultBreakMinutes] = useState(30);
   const [experienceBuilderConfig, setExperienceBuilderConfig] = useState<OrganizationExperienceBuilderConfig | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +46,6 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
     setLoginLogoUrl(settings.login_logo_url || '');
     setLoginBackgroundImageUrl(settings.login_background_image_url || '');
     setLoginAnnouncement(settings.login_announcement || '');
-    setTimelineWindowHours(settings.default_timeline_window_hours);
-    setDefaultBreakMinutes(settings.default_shift_break_minutes);
     setExperienceBuilderConfig(settings.experience_builder_config);
   }, [settings]);
 
@@ -93,13 +82,7 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
         loginAnnouncement,
         loginHeading,
         loginSubheading,
-        experienceBuilderConfig,
-        enableRetailFloorSimulation: settings.enable_retail_floor_simulation,
-        enableExtendedLeaveLock: settings.enable_extended_leave_lock,
-        extendedLeaveThresholdDays: settings.extended_leave_threshold_days,
-        enableAdminRealtimeNotifications: settings.enable_admin_realtime_notifications,
-        defaultTimelineWindowHours: timelineWindowHours,
-        defaultShiftBreakMinutes: defaultBreakMinutes
+        experienceBuilderConfig
       });
       setStatus('Organization settings saved.');
     } catch (err) {
@@ -135,28 +118,16 @@ export function OrgSettings({ settings, busy, onUploadLoginAsset, onOpenOpsBoard
           </label>
           <label>
             Default timeline window
-            <select
-              value={timelineWindowHours}
-              onChange={(event) => setTimelineWindowHours(Number(event.target.value) as TimelineZoomHours)}
-              disabled={disabled}
-            >
-              {TIMELINE_ZOOM_LEVELS.map((hours) => (
-                <option key={hours} value={hours}>
-                  {hours === 24 ? 'Full day' : `${hours} hour${hours === 1 ? '' : 's'}`}
-                </option>
-              ))}
-            </select>
+            <input value={`${settings.default_timeline_window_hours} hours`} disabled readOnly />
           </label>
           <label>
             Default shift break (minutes)
-            <input
-              type="number"
-              min={0}
-              value={defaultBreakMinutes}
-              onChange={(event) => setDefaultBreakMinutes(Number(event.target.value))}
-              disabled={disabled}
-            />
+            <input value={String(settings.default_shift_break_minutes)} disabled readOnly />
           </label>
+          <p className="empty-state">
+            Scheduling policy (timeline window, break length, leave lock, feature flags and training tuning) is
+            managed in RealtimeCorp under Policies → Site configuration.
+          </p>
           <div className="ops-editor-actions">
             <button type="button" onClick={onOpenOpsBoardSettings}>Live Board Settings</button>
           </div>

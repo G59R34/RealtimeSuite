@@ -13,9 +13,13 @@ from ..config import settings
 from ..db import get_organization
 from ..deps import RequestUser, get_current_user, get_db, get_db_optional, require_admin
 from ..features import DEFAULT_FEATURE_FLAGS, FEATURE_GROUPS, FEATURE_META, normalize_feature_flags
+from ..locks import CORP_OWNED_ORG_SETTINGS, corp_owned_message, reject_corp_owned
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+# Site-local configuration. Policy settings (leave lock, training mode, feature
+# flags, defaults) are corporate-owned and are not in this set: they arrive
+# through a RealtimeCorp command and are rejected here.
 ORG_EDITABLE = {
     "name",
     "admin_portal_label",
@@ -27,12 +31,6 @@ ORG_EDITABLE = {
     "login_heading",
     "login_subheading",
     "experience_builder_config",
-    "enable_retail_floor_simulation",
-    "enable_extended_leave_lock",
-    "extended_leave_threshold_days",
-    "enable_admin_realtime_notifications",
-    "default_timeline_window_hours",
-    "default_shift_break_minutes",
 }
 
 ALLOWED_IMAGE_TYPES = {
@@ -75,6 +73,8 @@ def update_settings(
     session: Session = Depends(get_db),
 ) -> dict:
     require_admin(session, user)
+    reject_corp_owned(payload, CORP_OWNED_ORG_SETTINGS)
+    reject_corp_owned(payload, ["feature_flags", "training_mode"])
     org = get_organization(session)
     updates = {key: value for key, value in payload.items() if key in ORG_EDITABLE}
     if not updates:
@@ -84,6 +84,19 @@ def update_settings(
     params: dict = {"id": org["id"]}
     for key, value in updates.items():
         if key in {"experience_builder_config", "onboarding_custom_questions"}:
+            if key == "experience_builder_config":
+                # The kiosk/layout config is local, but feature flags inside it are
+                # corporate-owned, so a local save must carry the stored flags over.
+                try:
+                    incoming = value if isinstance(value, dict) else json.loads(value or "{}")
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise HTTPException(
+                        status_code=400, detail="experience_builder_config must be a JSON object."
+                    ) from exc
+                stored = org.get("experience_builder_config") or {}
+                merged = {**(stored if isinstance(stored, dict) else {}), **incoming}
+                merged["feature_flags"] = (stored or {}).get("feature_flags") or {}
+                value = merged
             assignments.append(f"{key} = cast(:{key} as jsonb)")
             # psycopg cannot adapt dict/list parameters; send JSON text for the cast.
             params[key] = value if isinstance(value, str) else json.dumps(value)
@@ -103,34 +116,14 @@ def update_training_mode(
     user: RequestUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> dict:
+    # Training tuning is corporate-owned: it changes how the whole site behaves,
+    # so the console applies it through a `set_policy_settings` command.
     require_admin(session, user)
-    session.execute(
-        text(
-            """
-            select public.update_training_mode_settings(
-              :training_time_multiplier,
-              :training_fake_employee_count,
-              :training_no_show_rate_percent,
-              :training_task_ack_rate_percent,
-              :training_clock_in_early_min,
-              :training_clock_in_late_min,
-              :training_clock_out_early_min,
-              :training_clock_out_late_min
-            )
-            """
-        ),
-        {
-            "training_time_multiplier": int(payload.get("training_time_multiplier", 10)),
-            "training_fake_employee_count": int(payload.get("training_fake_employee_count", 18)),
-            "training_no_show_rate_percent": int(payload.get("training_no_show_rate_percent", 12)),
-            "training_task_ack_rate_percent": int(payload.get("training_task_ack_rate_percent", 82)),
-            "training_clock_in_early_min": int(payload.get("training_clock_in_early_min", -7)),
-            "training_clock_in_late_min": int(payload.get("training_clock_in_late_min", 9)),
-            "training_clock_out_early_min": int(payload.get("training_clock_out_early_min", -4)),
-            "training_clock_out_late_min": int(payload.get("training_clock_out_late_min", 14)),
-        },
+    raise HTTPException(
+        status_code=403,
+        detail=corp_owned_message("training_mode")
+        + " Change it in the RealtimeCorp console; this site applies it within seconds.",
     )
-    return dict(get_organization(session))
 
 
 @router.post("/assets")

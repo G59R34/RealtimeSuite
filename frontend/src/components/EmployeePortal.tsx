@@ -1278,7 +1278,7 @@ export function EmployeePortal({
               </strong>
               <small>
                 {resolveAreaName(nextShift.work_area_id, workAreaById)}
-                {nextShift.pay_multiplier > 1 ? ` · OT ${nextShift.pay_multiplier.toFixed(1)}x` : ''}
+                {nextShift.is_unscheduled_overtime ? ' · Unscheduled OT' : ''}
                 {nextShift.clocked_in_at && !nextShift.clocked_out_at ? ' · On the clock' : ''}
               </small>
             </>
@@ -1442,11 +1442,7 @@ export function EmployeePortal({
                     <li key={shift.id}>
                       <div className="employee-row-head">
                         <strong>
-                          {shift.is_unscheduled_overtime
-                            ? `${areaName} (Unscheduled OT ${shift.pay_multiplier.toFixed(1)}x)`
-                            : shift.pay_multiplier > 1
-                              ? `${areaName} (OT ${shift.pay_multiplier.toFixed(1)}x)`
-                              : areaName}
+                          {shift.is_unscheduled_overtime ? `${areaName} (Unscheduled OT)` : areaName}
                         </strong>
                         <span className="employee-badge neutral">{statusLabel(shift.status)}</span>
                       </div>
@@ -1763,7 +1759,7 @@ export function EmployeePortal({
                               <strong>{shortClock(shift.start_at)}-{shortClock(shift.end_at)}</strong>
                               <span>
                                 {areaName}
-                                {shift.pay_multiplier > 1 ? ` (OT ${shift.pay_multiplier.toFixed(1)}x)` : ''}
+                                {shift.is_unscheduled_overtime ? ' (Unscheduled OT)' : ''}
                               </span>
                               {unpaidEarlyMinutes > 0 ? <small>EARLY-IN unpaid {unpaidEarlyMinutes}m</small> : null}
                             </div>

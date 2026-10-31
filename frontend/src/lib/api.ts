@@ -202,13 +202,6 @@ export async function updateProfileHelpfulInfo(userId: string, helpfulInfo: stri
   });
 }
 
-export async function updateEmployeePayRate(employeeId: string, hourlyRate: number | null) {
-  await apiFetch(`/employees/${employeeId}`, {
-    method: 'PATCH',
-    body: jsonBody({ hourly_rate: hourlyRate })
-  });
-}
-
 export async function updateProfileRole(profileId: string, role: ProfileRow['role']) {
   await apiFetch(`/employees/${profileId}`, {
     method: 'PATCH',
@@ -465,14 +458,13 @@ function normalizeExperienceBuilderConfig(value: unknown): OrganizationExperienc
   };
 }
 
+// Pay is corporate-owned and is not part of any LAN payload.
 function normalizeProfile(row: Partial<ProfileRow>): ProfileRow {
-  const rate = row.hourly_rate;
   return {
     id: String(row.id ?? ''),
     email: String(row.email ?? ''),
     full_name: String(row.full_name ?? ''),
     helpful_info: String(row.helpful_info ?? ''),
-    hourly_rate: typeof rate === 'number' ? rate : rate ? Number(rate) || null : null,
     role: (row.role === 'admin' ? 'admin' : 'employee') as ProfileRow['role'],
     retail_chaos_stationary: Boolean(row.retail_chaos_stationary),
     admin_training_only: Boolean(row.admin_training_only),
@@ -555,12 +547,6 @@ export async function updateCurrentOrganizationSettings(payload: {
   loginHeading: string;
   loginSubheading: string;
   experienceBuilderConfig: OrganizationExperienceBuilderConfig;
-  enableRetailFloorSimulation: boolean;
-  enableExtendedLeaveLock: boolean;
-  extendedLeaveThresholdDays: number;
-  enableAdminRealtimeNotifications: boolean;
-  defaultTimelineWindowHours: TimelineZoomHours;
-  defaultShiftBreakMinutes: number;
 }): Promise<OrganizationSettings> {
   const row = await apiFetch<Record<string, unknown>>('/settings', {
     method: 'PATCH',
@@ -573,39 +559,7 @@ export async function updateCurrentOrganizationSettings(payload: {
       login_announcement: payload.loginAnnouncement,
       login_heading: payload.loginHeading,
       login_subheading: payload.loginSubheading,
-      experience_builder_config: payload.experienceBuilderConfig,
-      enable_retail_floor_simulation: payload.enableRetailFloorSimulation,
-      enable_extended_leave_lock: payload.enableExtendedLeaveLock,
-      extended_leave_threshold_days: payload.extendedLeaveThresholdDays,
-      enable_admin_realtime_notifications: payload.enableAdminRealtimeNotifications,
-      default_timeline_window_hours: payload.defaultTimelineWindowHours,
-      default_shift_break_minutes: payload.defaultShiftBreakMinutes
-    })
-  });
-  return normalizeOrganizationSettings(row);
-}
-
-export async function updateTrainingModeSettings(payload: {
-  trainingTimeMultiplier: number;
-  trainingFakeEmployeeCount: number;
-  trainingNoShowRatePercent: number;
-  trainingTaskAckRatePercent: number;
-  trainingClockInEarlyMin: number;
-  trainingClockInLateMin: number;
-  trainingClockOutEarlyMin: number;
-  trainingClockOutLateMin: number;
-}): Promise<OrganizationSettings> {
-  const row = await apiFetch<Record<string, unknown>>('/settings/training-mode', {
-    method: 'PATCH',
-    body: jsonBody({
-      training_time_multiplier: payload.trainingTimeMultiplier,
-      training_fake_employee_count: payload.trainingFakeEmployeeCount,
-      training_no_show_rate_percent: payload.trainingNoShowRatePercent,
-      training_task_ack_rate_percent: payload.trainingTaskAckRatePercent,
-      training_clock_in_early_min: payload.trainingClockInEarlyMin,
-      training_clock_in_late_min: payload.trainingClockInLateMin,
-      training_clock_out_early_min: payload.trainingClockOutEarlyMin,
-      training_clock_out_late_min: payload.trainingClockOutLateMin
+      experience_builder_config: payload.experienceBuilderConfig
     })
   });
   return normalizeOrganizationSettings(row);
@@ -697,30 +651,59 @@ export async function deleteOrganizationClockInLocation(locationId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Aggregates
+// Corporate (RealtimeCorp)
 // ---------------------------------------------------------------------------
 
-// `pay_multiplier` is a numeric column, but a numeric value can still arrive
-// serialized as text ("1.50"). Rendering code compares it with numbers and calls
-// toFixed, so coerce it once here instead of letting one row blank the screen.
-function normalizeShiftPay<T>(row: T): T {
-  const value = row as Record<string, unknown>;
-  if (value.pay_multiplier === undefined || typeof value.pay_multiplier === 'number') {
-    return row;
-  }
-  const multiplier = Number(value.pay_multiplier);
-  return {
-    ...value,
-    pay_multiplier: Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
-  } as T;
+// Pay, roles, feature flags and policy live in the corporate console. This site
+// applies the commands it queues; the UI only reports the channel's health.
+export type CorpCommandLogRow = {
+  command_id: string;
+  kind: string;
+  target_id: string | null;
+  payload: Record<string, unknown>;
+  status: 'pending' | 'applied' | 'failed';
+  attempts: number;
+  error: string | null;
+  received_at: string | null;
+  applied_at: string | null;
+};
+
+export type CorpIntegrationStatus = {
+  configured: boolean;
+  siteId: string | null;
+  companyId: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  commands?: {
+    enabled: boolean;
+    pollSeconds: number;
+    last_poll_at: string | null;
+    last_success_at: string | null;
+    last_error: string | null;
+    applied: number;
+    failed: number;
+  };
+  recentCommands?: CorpCommandLogRow[];
+};
+
+export async function fetchCorpIntegrationStatus(): Promise<CorpIntegrationStatus> {
+  return apiFetch('/integrations/corp/status');
 }
+
+export async function applyCorporateChanges(): Promise<{ ok: boolean; applied: number; failed: number }> {
+  return apiFetch('/integrations/corp/commands/apply', { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
+// Aggregates
+// ---------------------------------------------------------------------------
 
 export async function fetchAdminDashboardData(selectedDate: string): Promise<AdminDashboardData> {
   const data = await apiFetch<AdminDashboardData>(`/dashboard?date=${encodeURIComponent(selectedDate)}`);
   return {
     ...data,
-    shifts: (data.shifts ?? []).map(normalizeShiftPay),
-    monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay),
+    shifts: data.shifts ?? [],
+    monthShifts: data.monthShifts ?? [],
     timeNullifications: data.timeNullifications ?? []
   };
 }
@@ -729,9 +712,9 @@ export async function fetchEmployeePortalData(userId: string, selectedDate: stri
   const data = await apiFetch<EmployeePortalData>(`/portal?date=${encodeURIComponent(selectedDate)}`);
   return {
     ...data,
-    shifts: (data.shifts ?? []).map(normalizeShiftPay),
-    monthShifts: (data.monthShifts ?? []).map(normalizeShiftPay),
-    shiftPoolShifts: (data.shiftPoolShifts ?? []).map(normalizeShiftPay),
+    shifts: data.shifts ?? [],
+    monthShifts: data.monthShifts ?? [],
+    shiftPoolShifts: data.shiftPoolShifts ?? [],
     timeNullifications: data.timeNullifications ?? []
   };
 }

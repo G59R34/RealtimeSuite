@@ -83,7 +83,6 @@ import {
   subscribeToAdminRealtimeNotifications,
   subscribeToAppRealtime,
   updateDisciplineAction,
-  updateEmployeePayRate,
   updateExceptionRequestByAdmin,
   updateProfileHelpfulInfo,
   updateShiftWorkArea,
@@ -692,7 +691,6 @@ export default function App() {
             onApplyDisciplineAction={(actionId, notes) => runMutation(() => applyDisciplineAction(actionId, notes))}
             onRevokeDisciplineAction={(actionId, notes) => runMutation(() => revokeDisciplineAction(actionId, notes))}
             onUpdateDisciplineAction={(payload) => runMutation(() => updateDisciplineAction(payload))}
-            onUpdateEmployeePayRate={(employeeId, rate) => runMutation(() => updateEmployeePayRate(employeeId, rate))}
             onCreateEmployeeAccount={(payload) => runMutation(() => adminCreateEmployeeAccount(payload))}
             onSendOnboardingEmail={(payload) => runMutation(async () => {
               await sendOnboardingCredentialsEmail(payload);
@@ -728,13 +726,7 @@ export default function App() {
                 loginAnnouncement: settings.login_announcement,
                 loginHeading: settings.login_heading,
                 loginSubheading: settings.login_subheading,
-                experienceBuilderConfig: { ...settings.experience_builder_config, opsboard_settings: opsboardSettings },
-                enableRetailFloorSimulation: settings.enable_retail_floor_simulation,
-                enableExtendedLeaveLock: settings.enable_extended_leave_lock,
-                extendedLeaveThresholdDays: settings.extended_leave_threshold_days,
-                enableAdminRealtimeNotifications: settings.enable_admin_realtime_notifications,
-                defaultTimelineWindowHours: settings.default_timeline_window_hours,
-                defaultShiftBreakMinutes: settings.default_shift_break_minutes
+                experienceBuilderConfig: { ...settings.experience_builder_config, opsboard_settings: opsboardSettings }
               }));
               setSettings(updated);
             }}

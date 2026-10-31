@@ -13,16 +13,26 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_organization, session_scope
 from ..deps import RequestUser, get_current_user, get_db, is_effective_admin, require_admin
+from ..locks import corp_owned_message, reject_corp_owned
 from ..security import hash_password
 
 router = APIRouter(prefix="/api", tags=["employees"])
 
+# hourly_rate is deliberately absent: pay is corporate-owned and never leaves
+# the server for a LAN client.
 PROFILE_COLUMNS = """
-  p.id, p.email, p.full_name, p.helpful_info, p.hourly_rate, p.role::text as role,
+  p.id, p.email, p.full_name, p.helpful_info, p.role::text as role,
   p.retail_chaos_stationary, p.admin_training_only, p.is_training_manager,
   p.onboarding_started_at, p.onboarding_completed_at, p.onboarding_completed_version,
   p.onboarding_answers, p.created_at, p.updated_at
 """
+
+CORP_MANAGED_EMPLOYEE_FIELDS = [
+    "hourly_rate",
+    "role",
+    "is_training_manager",
+    "admin_training_only",
+]
 
 
 class CreateEmployeePayload(BaseModel):
@@ -35,8 +45,6 @@ class CreateEmployeePayload(BaseModel):
 def serialize_profile(row) -> dict:
     data = dict(row)
     data["id"] = str(data["id"])
-    if data.get("hourly_rate") is not None:
-        data["hourly_rate"] = float(data["hourly_rate"])
     return data
 
 
@@ -61,6 +69,19 @@ def create_employee(
         raise HTTPException(status_code=400, detail="Temporary password must be at least 8 characters.")
     if payload.role not in {"admin", "employee"}:
         raise HTTPException(status_code=400, detail="Invalid role.")
+    if payload.role == "admin":
+        # Roles are corporate-owned. The one exception is the first-run
+        # bootstrap, which is only possible while the site has no admin at all
+        # (ensure_seed and `cli create-admin` cover a fresh install).
+        existing_admin = session.execute(
+            text("select 1 from public.profiles where role = 'admin' limit 1")
+        ).scalar()
+        if existing_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=corp_owned_message("role")
+                + " Change it in the RealtimeCorp console; this site applies it within seconds.",
+            )
     org = get_organization(session)
     email = payload.email.lower().strip()
     if session.execute(
@@ -76,7 +97,7 @@ def create_employee(
             """
             insert into public.profiles (id, email, full_name, role, organization_id)
             values (:id, :email, :full_name, cast(:role as public.app_role), :org)
-            returning id, email, full_name, helpful_info, hourly_rate, role::text as role,
+            returning id, email, full_name, helpful_info, role::text as role,
                       retail_chaos_stationary, admin_training_only, is_training_manager,
                       onboarding_started_at, onboarding_completed_at, onboarding_completed_version,
                       onboarding_answers, created_at, updated_at
@@ -101,32 +122,24 @@ def update_employee(
     session: Session = Depends(get_db),
 ) -> dict:
     require_admin(session, user)
+    reject_corp_owned(payload, CORP_MANAGED_EMPLOYEE_FIELDS)
     allowed = {
         "full_name",
         "helpful_info",
-        "hourly_rate",
-        "role",
-        "admin_training_only",
-        "is_training_manager",
         "retail_chaos_stationary",
     }
     updates = {key: value for key, value in payload.items() if key in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update.")
-    if "role" in updates and updates["role"] not in {"admin", "employee"}:
-        raise HTTPException(status_code=400, detail="Invalid role.")
     assignments = []
     params = {"id": employee_id}
     for key, value in updates.items():
-        if key == "role":
-            assignments.append("role = cast(:role as public.app_role)")
-        else:
-            assignments.append(f"{key} = :{key}")
+        assignments.append(f"{key} = :{key}")
         params[key] = value
     row = session.execute(
         text(
             f"update public.profiles set {', '.join(assignments)} where id = :id "
-            "returning id, email, full_name, helpful_info, hourly_rate, role::text as role, "
+            "returning id, email, full_name, helpful_info, role::text as role, "
             "retail_chaos_stationary, admin_training_only, is_training_manager, "
             "onboarding_started_at, onboarding_completed_at, onboarding_completed_version, "
             "onboarding_answers, created_at, updated_at"

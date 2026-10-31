@@ -1831,8 +1831,8 @@ export function TimelineBoard({
                           const area = shift.work_area_id ? workAreaById.get(shift.work_area_id) : null;
                           const color = area?.color && /^#[0-9a-f]{6}$/i.test(area.color) ? area.color : '#1f56b9';
                           const alert = shiftAlert(shift, employeeAssignments);
-                          const multiplier = Number(shift.pay_multiplier);
-                          const overtime = shift.is_unscheduled_overtime || multiplier > 1;
+                          // Pay multipliers are corporate-owned and never reach the LAN UI.
+                          const overtime = shift.is_unscheduled_overtime;
                           const dragOffset = drag?.kind === 'shift' && drag.id === shift.id ? drag.deltaMinutes * ppm : 0;
                           return (
                             <button
@@ -1855,11 +1855,8 @@ export function TimelineBoard({
                                   {toTimeHHMM(shift.start_at)}–{toTimeHHMM(shift.end_at)}
                                 </span>
                                 {overtime ? (
-                                  <span
-                                    className="rs-shift-line-chip ot"
-                                    title={`Overtime shift${shift.is_unscheduled_overtime ? ' (unscheduled)' : ''}${Number.isFinite(multiplier) ? ` — ${multiplier.toFixed(1)}x pay` : ''}`}
-                                  >
-                                    {Number.isFinite(multiplier) && multiplier > 1 ? `OT ${multiplier.toFixed(1)}x` : 'OT'}
+                                  <span className="rs-shift-line-chip ot" title="Unscheduled overtime shift">
+                                    OT
                                   </span>
                                 ) : null}
                                 {alert ? (

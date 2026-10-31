@@ -7,8 +7,19 @@ from sqlalchemy.orm import Session
 from ..db import get_organization
 from ..deps import RequestUser, get_current_user, get_db, require_manager
 from ..leave import leave_window, wipe_employee_window
+from ..locks import corp_owned_message
 
 router = APIRouter(prefix="/api/discipline", tags=["discipline"])
+
+
+def _reject_pay_reduction(punishment_type: str) -> None:
+    """A pay reduction changes compensation, which only RealtimeCorp may do."""
+    if punishment_type == "pay_rate_reduction":
+        raise HTTPException(
+            status_code=403,
+            detail=corp_owned_message("hourly_rate")
+            + " Change the rate in the RealtimeCorp console; this site applies it within seconds.",
+        )
 
 
 def _leave_columns(session: Session, action_id: str, start, end) -> None:
@@ -33,6 +44,7 @@ def create_action(
     if not employee_id:
         raise HTTPException(status_code=400, detail="An employee is required.")
     punishment_type = str(payload.get("punishment_type") or "none")
+    _reject_pay_reduction(punishment_type)
     punishment_value = float(payload.get("punishment_value", 0) or 0)
     status = str(payload.get("status") or "issued")
     # A suspension or probation takes the employee off the schedule as soon as it is
@@ -95,6 +107,7 @@ def update_action(
     updates = {key: value for key, value in payload.items() if key in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update.")
+    _reject_pay_reduction(str(updates.get("punishment_type") or "none"))
     assignments = []
     params = {"id": action_id, "actor": user.id}
     for key, value in updates.items():
@@ -149,6 +162,12 @@ def apply_action(
     session: Session = Depends(get_db),
 ) -> dict:
     require_manager(session, user)
+    stored_type = session.execute(
+        text("select punishment_type::text from public.discipline_actions where id = :id"),
+        {"id": action_id},
+    ).scalar()
+    if stored_type:
+        _reject_pay_reduction(str(stored_type))
     session.execute(
         text("select public.apply_discipline_action(:id, :notes)"),
         {"id": action_id, "notes": str((payload or {}).get("review_notes", ""))},

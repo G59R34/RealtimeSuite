@@ -122,14 +122,14 @@
           <header class="page-head">
             <div>
               <h1>People &amp; Access</h1>
-              <p>Create and remove accounts for this scheduling server. Changes apply immediately.</p>
+              <p>Create and remove accounts for this scheduling server. Roles are assigned in RealtimeCorp.</p>
             </div>
             <button type="button" class="link" id="btn-refresh-users">Refresh</button>
           </header>
 
           <article class="card">
             <h2>Add account</h2>
-            <div class="grid four">
+            <div class="grid three">
               <label class="field">
                 <span>Full name</span>
                 <input id="user-name" type="text" autocomplete="off" placeholder="Jordan Smith" />
@@ -137,13 +137,6 @@
               <label class="field">
                 <span>Email</span>
                 <input id="user-email" type="email" spellcheck="false" autocomplete="off" placeholder="jordan@example.com" />
-              </label>
-              <label class="field">
-                <span>Role</span>
-                <select id="user-role">
-                  <option value="employee">Employee</option>
-                  <option value="admin">Administrator</option>
-                </select>
               </label>
               <label class="field">
                 <span>Temporary password</span>
@@ -190,13 +183,14 @@
           <header class="page-head">
             <div>
               <h1>Feature Toggles</h1>
-              <p>Turn parts of RealtimeSuite on or off. Changes apply the next time someone loads the app.</p>
-            </div>
-            <div class="hero-actions">
-              <button type="button" id="btn-feature-reset">Reset to Defaults</button>
-              <button type="button" class="primary" id="btn-feature-save">Save Changes</button>
+              <p>Feature flags are owned by RealtimeCorp. This page shows what the site is running.</p>
             </div>
           </header>
+
+          <div class="banner warn" role="status">
+            Managed in RealtimeCorp. Change feature flags under <strong>Policies → Site configuration</strong> in the
+            corporate console; this server picks the change up within seconds. The switches below are read-only.
+          </div>
 
           <div id="feature-summary" class="banner hidden" role="status"></div>
           <div id="feature-groups" class="feature-groups">
@@ -206,9 +200,10 @@
           <article class="card feature-note">
             <h2>How this applies</h2>
             <p class="muted">
-              Feature flags are stored with the organization. The web app hides the matching tabs, buttons and
-              sections; existing data is kept, so turning a feature back on restores it. The server does not need
-              to restart. The <code>/opsboard.html</code> kiosk hides disabled areas on its next refresh.
+              A corporate change is queued as a command, this server applies it on its next poll (about ten
+              seconds), and the flags below refresh. The web app hides the matching tabs, buttons and sections;
+              existing data is kept, so turning a feature back on restores it. The server does not need to
+              restart. The <code>/opsboard.html</code> kiosk hides disabled areas on its next refresh.
             </p>
           </article>
         </section>

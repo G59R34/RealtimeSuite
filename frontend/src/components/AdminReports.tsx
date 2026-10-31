@@ -63,7 +63,7 @@ export function AdminReports({ employees, shifts, tasks, taskAssignments, workAr
 
         const workedMinutes = employeeShifts.reduce((sum, shift) => sum + (shift.worked_minutes ?? 0), 0);
         const unscheduledOvertimeMinutes = employeeShifts
-          .filter((shift) => shift.is_unscheduled_overtime || shift.pay_multiplier > 1)
+          .filter((shift) => shift.is_unscheduled_overtime)
           .reduce((sum, shift) => sum + (shift.worked_minutes ?? 0), 0);
         const lateClockOutMinutes = employeeShifts.reduce((sum, shift) => {
           if (shift.is_unscheduled_overtime || !shift.clocked_out_at) return sum;
@@ -174,14 +174,14 @@ export function AdminReports({ employees, shifts, tasks, taskAssignments, workAr
                           shift.is_unscheduled_overtime || !shift.clocked_out_at
                             ? 0
                             : Math.max(0, minutesBetween(shift.end_at, shift.clocked_out_at));
-                        const overtimeMinutes = ((shift.is_unscheduled_overtime || shift.pay_multiplier > 1) ? shift.worked_minutes ?? 0 : 0) + lateClockOutMinutes;
+                        const overtimeMinutes = ((shift.is_unscheduled_overtime) ? shift.worked_minutes ?? 0 : 0) + lateClockOutMinutes;
                         return (
                           <tr key={shift.id}>
                             <td>{shift.work_area_id ? workAreaById.get(shift.work_area_id) ?? 'Unassigned' : 'Unassigned'}</td>
                             <td>{toTimeHHMM(shift.start_at)}-{toTimeHHMM(shift.end_at)}</td>
                             <td>
                               {statusLabel(shift.status)}
-                              {shift.is_unscheduled_overtime ? ' (Unscheduled OT)' : shift.pay_multiplier > 1 ? ` (OT ${shift.pay_multiplier.toFixed(1)}x)` : ''}
+                              {shift.is_unscheduled_overtime ? ' (Unscheduled OT)' : ''}
                             </td>
                             <td>{shift.clocked_in_at ? toReadableDate(shift.clocked_in_at) : '-'}</td>
                             <td>{shift.clocked_out_at ? toReadableDate(shift.clocked_out_at) : '-'}</td>

@@ -16,7 +16,7 @@ SHIFT_COLUMNS = """
   s.id, s.employee_id, s.work_area_id, s.start_at, s.end_at, s.status::text as status,
   s.clocked_in_at, s.clocked_out_at, s.clock_in_latitude, s.clock_in_longitude,
   s.clock_in_accuracy_meters, s.clock_in_device, s.clock_in_is_mobile,
-  s.is_unscheduled_overtime, s.pay_multiplier::float8 as pay_multiplier, s.worked_minutes, s.break_minutes,
+  s.is_unscheduled_overtime, s.worked_minutes, s.break_minutes,
   s.is_shift_pool, s.shift_pool_posted_at, s.shift_pool_posted_by,
   s.shift_pool_claimed_at, s.shift_pool_claimed_by, s.notes,
   s.created_by, s.updated_by, s.created_at, s.updated_at
@@ -28,8 +28,9 @@ TASK_COLUMNS = """
   t.created_by, t.updated_by, t.created_at, t.updated_at
 """
 
+# Pay is corporate-owned; no hourly_rate leaves the server for a LAN client.
 PROFILE_COLUMNS = """
-  p.id, p.email, p.full_name, p.helpful_info, p.hourly_rate, p.role::text as role,
+  p.id, p.email, p.full_name, p.helpful_info, p.role::text as role,
   p.retail_chaos_stationary, p.admin_training_only, p.is_training_manager,
   p.onboarding_started_at, p.onboarding_completed_at, p.onboarding_completed_version,
   p.onboarding_answers, p.created_at, p.updated_at
@@ -52,8 +53,6 @@ def _month_bounds(value: str) -> tuple[datetime, datetime]:
 def _serialize_profile(row) -> dict:
     data = dict(row)
     data["id"] = str(data["id"])
-    if data.get("hourly_rate") is not None:
-        data["hourly_rate"] = float(data["hourly_rate"])
     return data
 
 
