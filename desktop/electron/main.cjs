@@ -45,6 +45,23 @@ function createWindow() {
   });
 
   void mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  // Electron has no default context menu, so right-click paste into the key and
+  // password fields silently did nothing.
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable && !params.selectionText) return;
+    const template = params.isEditable
+      ? [
+          { role: 'cut', enabled: params.editFlags.canCut },
+          { role: 'copy', enabled: params.editFlags.canCopy },
+          { role: 'paste', enabled: params.editFlags.canPaste },
+          { type: 'separator' },
+          { role: 'selectAll' }
+        ]
+      : [{ role: 'copy' }];
+    Menu.buildFromTemplate(template).popup({ window: mainWindow });
+  });
+
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
   if (smokeTest) {
     mainWindow.webContents.once('did-finish-load', () => {
@@ -123,6 +140,18 @@ function buildMenu() {
       ]
     },
     {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
       label: 'Server',
       submenu: [
         { label: 'Start', click: () => manager.start().catch((error) => dialog.showErrorBox('Start failed', error.message)) },
@@ -173,6 +202,11 @@ function registerIpc() {
     await manager.saveSettings(patch || {});
     return statePayload();
   });
+  ipcMain.handle('manager:rtlink', () => ({ rtlink: manager.rtlinkConfig() }));
+  ipcMain.handle('manager:rtlink-save', async (_event, payload) => ({
+    ok: true,
+    rtlink: await manager.saveRtlinkConfig(payload)
+  }));
   ipcMain.handle('manager:save-env', async (_event, values) => {
     await manager.applyEnvValues(values || {});
     return statePayload();
@@ -330,6 +364,7 @@ app.whenReady().then(async () => {
   createWindow();
   try {
     await manager.ensureEnvFile();
+    await manager.syncRtlinkEnv();
   } catch (error) {
     manager.log('system', `Could not prepare .env: ${error.message}`);
   }

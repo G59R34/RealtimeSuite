@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { AppShell } from './components/AppShell';
 import { AuthScreen, LinkRequiredScreen } from './components/AuthScreen';
+import { OrgGate } from './components/OrgGate';
 import { TodayView } from './components/TodayView';
 import { ScheduleView } from './components/ScheduleView';
 import { TasksView } from './components/TasksView';
 import { RequestsView } from './components/RequestsView';
 import { MeView } from './components/MeView';
 import { fetchWorkspace, signOut, submitAction } from './lib/data';
-import { supabase, supabaseConfigured } from './lib/supabase';
+import { clearOrgCode, getOrgCode, supabase, supabaseConfigured } from './lib/supabase';
 import type { ActionKind, ViewMode, Workspace } from './types';
 
 const ACTION_NOTICES: Record<ActionKind, string> = {
@@ -31,6 +32,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('today');
   const [notice, setNotice] = useState<string | null>(null);
+  const [orgCode, setOrgCodeState] = useState<string>(() => getOrgCode());
   const timers = useRef<number[]>([]);
 
   useEffect(() => {
@@ -111,12 +113,30 @@ export default function App() {
     setNotice(null);
   }
 
+  async function handleChangeOrg() {
+    clearOrgCode();
+    setOrgCodeState('');
+    setWorkspace(null);
+    setView('today');
+    await signOut();
+  }
+
+  if (!orgCode) {
+    return <OrgGate onSelected={(code) => setOrgCodeState(code)} />;
+  }
+
   if (checking) {
     return <div className="splash">Opening RTLink…</div>;
   }
 
   if (!session) {
-    return <AuthScreen configured={supabaseConfigured} />;
+    return (
+      <AuthScreen
+        configured={supabaseConfigured}
+        orgCode={orgCode}
+        onChangeOrg={() => void handleChangeOrg()}
+      />
+    );
   }
 
   if (!workspace) {
@@ -142,6 +162,8 @@ export default function App() {
     return (
       <LinkRequiredScreen
         email={session.user.email ?? null}
+        orgCode={orgCode}
+        onChangeOrg={() => void handleChangeOrg()}
         onSignOut={() => void handleSignOut()}
         onRetry={() => void load()}
       />
@@ -164,7 +186,13 @@ export default function App() {
       {view === 'tasks' && <TasksView workspace={workspace} onSubmit={submit} />}
       {view === 'requests' && <RequestsView workspace={workspace} onSubmit={submit} />}
       {view === 'me' && (
-        <MeView workspace={workspace} email={session.user.email ?? null} onSignOut={() => void handleSignOut()} />
+        <MeView
+          workspace={workspace}
+          email={session.user.email ?? null}
+          orgCode={orgCode}
+          onChangeOrg={() => void handleChangeOrg()}
+          onSignOut={() => void handleSignOut()}
+        />
       )}
     </AppShell>
   );

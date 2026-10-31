@@ -8,6 +8,7 @@ import type {
   Employee,
   ExceptionRequest,
   OvertimeRequest,
+  OrgSummary,
   Shift,
   Site,
   SiteSettings,
@@ -31,6 +32,13 @@ async function single<T>(query: PromiseLike<QueryResult>): Promise<T | null> {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data as T | null) ?? null;
+}
+
+export async function lookupOrg(code: string): Promise<OrgSummary | null> {
+  const { data, error } = await supabase.rpc('rtlink_lookup_org', { p_code: code.trim() });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return (row as OrgSummary | undefined) ?? null;
 }
 
 export async function signIn(email: string, password: string): Promise<void> {

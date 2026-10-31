@@ -11,6 +11,13 @@ export type ActionKind =
 
 export type ActionStatus = 'pending' | 'applied' | 'failed' | 'cancelled';
 
+export interface OrgSummary {
+  site_id: string;
+  site_name: string;
+  organization_name: string | null;
+  org_code: string;
+}
+
 export interface Site {
   id: string;
   name: string;

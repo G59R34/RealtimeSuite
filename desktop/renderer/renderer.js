@@ -13,7 +13,8 @@ const state = {
   pendingDeleteTimer: null,
   featureSchema: null,
   features: null,
-  featureDraft: null
+  featureDraft: null,
+  rtlink: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -241,7 +242,8 @@ function renderChecklist() {
 const dirtyFields = new Set();
 const UNSAVED_FIELD_IDS = [
   'set-port', 'set-host', 'set-org', 'set-jwt', 'set-board-token',
-  'set-github-repos', 'set-github-poll', 'set-github-token', 'set-db-url'
+  'set-github-repos', 'set-github-poll', 'set-github-token', 'set-db-url',
+  'rtlink-org-code', 'rtlink-site-name'
 ];
 
 function trackUnsavedEdits() {
@@ -311,6 +313,8 @@ function applyState(payload) {
   $('app-version').textContent = `v${state.version}`;
   renderChecklist();
   renderSettings();
+  if (payload.check && payload.check.rtlink) state.rtlink = payload.check.rtlink;
+  renderRtlink();
   if (payload.logs) renderLogs(payload.logs);
 }
 
@@ -1128,3 +1132,39 @@ window.setInterval(() => {
 
 trackUnsavedEdits();
 refresh().then(() => loadBackups()).catch((error) => banner(error.message || String(error)));
+
+// ------------------------------------------------------------- RTLink card
+
+function renderRtlink() {
+  const rtlink = state.rtlink;
+  if (!rtlink) return;
+  $('rtlink-env-source').textContent = rtlink.envSource
+    ? `Read from ${rtlink.envPath}${rtlink.envSource === '.env.example' ? ' (example file — copy it to .env)' : ''}`
+    : `No Supabase URL found in ${rtlink.envPath}`;
+  $('rtlink-url').textContent = rtlink.supabaseUrl || 'Not set';
+  $('rtlink-anon').textContent = rtlink.anonKeySet ? 'Anon key found in rtlink/.env' : 'Anon key missing from rtlink/.env';
+  $('rtlink-site-id').textContent = rtlink.siteId || 'generated on first save';
+  $('rtlink-service-key').placeholder = rtlink.serviceKeySet
+    ? 'Service key saved — leave blank to keep it'
+    : 'Paste the service_role key';
+  const badge = $('rtlink-badge');
+  badge.textContent = rtlink.configured ? 'Connected' : 'Setup incomplete';
+  badge.className = `step-badge ${rtlink.configured ? 'ok' : ''}`;
+  if (shouldSyncField('rtlink-org-code')) $('rtlink-org-code').value = rtlink.orgCode || '';
+  if (shouldSyncField('rtlink-site-name')) $('rtlink-site-name').value = rtlink.siteName || '';
+}
+
+$('btn-save-rtlink').addEventListener('click', () => withBusy($('btn-save-rtlink'), 'Saving...', async () => {
+  const result = await api.saveRtlink({
+    orgCode: $('rtlink-org-code').value.trim(),
+    siteName: $('rtlink-site-name').value.trim(),
+    serviceRoleKey: $('rtlink-service-key').value
+  });
+  state.rtlink = result.rtlink;
+  $('rtlink-service-key').value = '';
+  releaseUnsavedEdits(['rtlink-org-code', 'rtlink-site-name']);
+  renderRtlink();
+  await refresh();
+  $('rtlink-status').textContent = 'Saved to backend/.env. Restart the server to apply it.';
+  banner('RTLink settings saved. Restart the server to apply them.', 'ok');
+}));

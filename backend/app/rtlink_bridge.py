@@ -341,6 +341,7 @@ def build_snapshot() -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]], s
         "id": site_id,
         "name": settings.rtlink_site_name or organization or settings.organization_name,
         "organization_name": organization or settings.organization_name,
+        "org_code": settings.rtlink_org_code or None,
         "timezone": datetime.now().astimezone().strftime("%Z"),
         "app_version": settings.app_version,
         "last_sync_at": stamp,

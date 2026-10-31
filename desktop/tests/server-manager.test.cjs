@@ -420,3 +420,64 @@ test('packaged installs can place the virtual environment outside the app bundle
     : path.join(venvDir, 'bin', 'python');
   assert.equal(manager.venvPythonPath(), expected);
 });
+
+test('RTLink configuration comes from rtlink/.env and keeps the service key server-side', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const rtlinkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-rtlink-'));
+  fs.writeFileSync(
+    path.join(rtlinkDir, '.env'),
+    'VITE_SUPABASE_URL=https://demo.supabase.co/\nVITE_SUPABASE_ANON_KEY=anon-key\n'
+  );
+  const manager = new ServerManager({ backendDir, userDataDir, rtlinkDir });
+  await manager.ensureEnvFile();
+
+  const before = manager.rtlinkConfig();
+  assert.equal(before.supabaseUrl, 'https://demo.supabase.co');
+  assert.equal(before.envSource, '.env');
+  assert.equal(before.anonKeySet, true);
+  assert.equal(before.serviceKeySet, false);
+  assert.equal(before.configured, false);
+
+  const synced = await manager.syncRtlinkEnv();
+  assert.equal(synced.synced, true);
+  assert.equal(manager.readEnv().RTLINK_SUPABASE_URL, 'https://demo.supabase.co');
+
+  await assert.rejects(() => manager.saveRtlinkConfig({ orgCode: 'x' }), /Organization code/);
+  await assert.rejects(() => manager.saveRtlinkConfig({ orgCode: 'NORTHWIND' }), /service_role/);
+
+  const config = await manager.saveRtlinkConfig({
+    orgCode: 'northwind',
+    siteName: 'Denver Flagship',
+    serviceRoleKey: 'service-key'
+  });
+  assert.equal(config.orgCode, 'NORTHWIND');
+  assert.equal(config.siteName, 'Denver Flagship');
+  assert.equal(config.serviceKeySet, true);
+  assert.equal(config.configured, true);
+  assert.match(config.siteId, /^[0-9a-f-]{36}$/);
+  assert.equal(manager.readEnv().RTLINK_ORG_CODE, 'NORTHWIND');
+  assert.equal(manager.readEnv().RTLINK_SUPABASE_SERVICE_ROLE_KEY, 'service-key');
+
+  // A blank key on the next save keeps the stored one; the URL is re-read from the project.
+  const again = await manager.saveRtlinkConfig({ orgCode: 'NORTHWIND', siteName: 'Denver Flagship' });
+  assert.equal(again.siteId, config.siteId);
+  assert.equal(again.serviceKeySet, true);
+});
+
+test('RTLink setup refuses a placeholder or missing project URL', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));
+  const rtlinkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-rtlink-'));
+  fs.writeFileSync(path.join(rtlinkDir, '.env'), 'VITE_SUPABASE_URL=https://your-project.supabase.co\n');
+  const manager = new ServerManager({ backendDir, userDataDir, rtlinkDir });
+  await manager.ensureEnvFile();
+
+  const synced = await manager.syncRtlinkEnv();
+  assert.equal(synced.synced, false);
+  assert.equal(manager.readEnv().RTLINK_SUPABASE_URL, undefined);
+  await assert.rejects(
+    () => manager.saveRtlinkConfig({ orgCode: 'NORTHWIND', serviceRoleKey: 'service-key' }),
+    /VITE_SUPABASE_URL/
+  );
+});

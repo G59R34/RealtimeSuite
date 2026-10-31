@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('manager', {
   getState: () => ipcRenderer.invoke('manager:state'),
   saveSettings: (patch) => ipcRenderer.invoke('manager:save-settings', patch),
   saveEnv: (values) => ipcRenderer.invoke('manager:save-env', values),
+  getRtlink: () => ipcRenderer.invoke('manager:rtlink'),
+  saveRtlink: (payload) => ipcRenderer.invoke('manager:rtlink-save', payload),
   setup: () => ipcRenderer.invoke('manager:setup'),
   initDatabase: () => ipcRenderer.invoke('manager:init-db'),
   testDatabase: () => ipcRenderer.invoke('manager:test-db'),

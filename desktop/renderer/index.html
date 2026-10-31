@@ -448,6 +448,47 @@
           </article>
 
           <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>RTLink employee app</h2>
+                <p class="muted">Reads the Supabase project from <code>rtlink/.env</code> and writes the site credentials the server needs.</p>
+              </div>
+              <span class="step-badge" id="rtlink-badge">Check</span>
+            </div>
+            <p class="hint" id="rtlink-env-source">Looking for rtlink/.env…</p>
+            <div class="grid two">
+              <label class="field">
+                <span>Supabase URL (from rtlink/.env)</span>
+                <p class="hint" id="rtlink-url">Not set</p>
+              </label>
+              <label class="field">
+                <span>Browser key</span>
+                <p class="hint" id="rtlink-anon">Not checked</p>
+              </label>
+            </div>
+            <div class="grid two">
+              <label class="field">
+                <span>Organization code</span>
+                <input id="rtlink-org-code" type="text" spellcheck="false" placeholder="NORTHWIND" />
+              </label>
+              <label class="field">
+                <span>Site name</span>
+                <input id="rtlink-site-name" type="text" placeholder="Denver Flagship" />
+              </label>
+            </div>
+            <label class="field">
+              <span>Service role key</span>
+              <input id="rtlink-service-key" type="password" spellcheck="false" placeholder="Paste the service_role key" />
+            </label>
+            <p class="hint">Employees type the organization code before signing in, so the same Supabase project can host more than one organization. Site id: <span id="rtlink-site-id">generated on first save</span>.</p>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btn-save-rtlink">Save RTLink settings</button>
+            </div>
+            <p class="hint">The URL is copied from <code>rtlink/.env</code> automatically. The service_role key stays in <code>backend/.env</code> and never reaches a browser. Restart the server after saving.</p>
+            <p class="hint" id="rtlink-status" role="status"></p>
+          </article>
+
+          <article class="card">
             <div class="card-head"><div><h2>Maintenance &amp; startup</h2><p class="muted">Control service availability and recovery behavior.</p></div><span class="step-badge" id="auto-restart-pill">Automatic recovery enabled</span></div>
             <label class="inline-check"><input id="set-autostart" type="checkbox" /> Start the server when the manager opens</label>
             <label class="inline-check"><input id="set-autorestart" type="checkbox" /> Restart automatically if the server crashes</label>

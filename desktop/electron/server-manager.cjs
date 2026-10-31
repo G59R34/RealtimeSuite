@@ -2,6 +2,7 @@
 
 const { EventEmitter } = require('node:events');
 const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const net = require('node:net');
@@ -162,6 +163,7 @@ class ServerManager extends EventEmitter {
     this.userDataDir = options.userDataDir || path.join(os.homedir(), '.realtimesuite-manager');
     this.envFile = options.envFile || path.join(this.backendDir, '.env');
     this.venvDir = options.venvDir || path.join(this.backendDir, '.venv');
+    this.rtlinkDir = options.rtlinkDir || path.resolve(this.backendDir, '..', 'rtlink');
     this.settingsFile = path.join(this.userDataDir, 'settings.json');
     this.logFile = path.join(this.userDataDir, 'logs', 'server.log');
     this.backupDir = path.join(this.userDataDir, 'backups');
@@ -310,6 +312,108 @@ class ServerManager extends EventEmitter {
     return this.readEnv();
   }
 
+  // ------------------------------------------------------------------ RTLink
+
+  rtlinkEnvPath() {
+    return path.join(this.rtlinkDir, '.env');
+  }
+
+  /**
+   * The Supabase project is configured once, in rtlink/.env, because that is the
+   * file the employee app is built with. The manager reads it instead of asking
+   * an administrator to copy the same URL into the backend by hand.
+   */
+  readRtlinkEnvFile() {
+    for (const name of ['.env', '.env.example']) {
+      const file = path.join(this.rtlinkDir, name);
+      let text;
+      try {
+        text = fs.readFileSync(file, 'utf8');
+      } catch {
+        continue;
+      }
+      const values = parseEnv(text);
+      const url = (values.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+      const anonKey = (values.VITE_SUPABASE_ANON_KEY || '').trim();
+      if (!url && !anonKey) continue;
+      if (/your-project|xxxx|example\.com/i.test(url)) continue;
+      return { path: file, source: name, url, anonKeySet: Boolean(anonKey) };
+    }
+    return { path: this.rtlinkEnvPath(), source: null, url: '', anonKeySet: false };
+  }
+
+  rtlinkConfig() {
+    const env = this.readEnv();
+    const fromProject = this.readRtlinkEnvFile();
+    const envUrl = (env.RTLINK_SUPABASE_URL || '').trim();
+    const supabaseUrl = envUrl || fromProject.url;
+    return {
+      rtlinkDir: this.rtlinkDir,
+      envPath: fromProject.path,
+      envSource: fromProject.source,
+      supabaseUrl,
+      projectSupabaseUrl: fromProject.url,
+      anonKeySet: fromProject.anonKeySet,
+      urlMatchesProject: fromProject.url && envUrl ? envUrl === fromProject.url : null,
+      siteId: env.RTLINK_SITE_ID || '',
+      orgCode: env.RTLINK_ORG_CODE || '',
+      siteName: env.RTLINK_SITE_NAME || '',
+      serviceKeySet: Boolean(env.RTLINK_SUPABASE_SERVICE_ROLE_KEY),
+      syncMinutes: Number(env.RTLINK_SYNC_MINUTES || 5),
+      pollSeconds: Number(env.RTLINK_POLL_SECONDS || 15),
+      configured: Boolean(supabaseUrl && env.RTLINK_SUPABASE_SERVICE_ROLE_KEY && env.RTLINK_SITE_ID)
+    };
+  }
+
+  /** Copy the project URL out of rtlink/.env whenever it has changed. */
+  async syncRtlinkEnv() {
+    const fromProject = this.readRtlinkEnvFile();
+    if (!fromProject.url) {
+      return { synced: false, detail: `No VITE_SUPABASE_URL found in ${this.rtlinkEnvPath()}.` };
+    }
+    const current = (this.readEnv().RTLINK_SUPABASE_URL || '').trim();
+    if (current === fromProject.url) {
+      return { synced: false, detail: 'RTLINK_SUPABASE_URL already matches rtlink/.env.' };
+    }
+    await this.applyEnvValues({ RTLINK_SUPABASE_URL: fromProject.url });
+    this.log('system', `RTLink Supabase URL read from ${path.basename(fromProject.path)}: ${fromProject.url}`);
+    return { synced: true, detail: `RTLINK_SUPABASE_URL set to ${fromProject.url}.` };
+  }
+
+  async saveRtlinkConfig({ orgCode, siteName, serviceRoleKey } = {}) {
+    const fromProject = this.readRtlinkEnvFile();
+    if (!fromProject.url) {
+      throw new Error(`Add VITE_SUPABASE_URL to ${this.rtlinkEnvPath()} before connecting RTLink.`);
+    }
+    const code = String(orgCode || '').trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(code)) {
+      throw new Error('Organization code must be 2-32 characters: letters, numbers, hyphen or underscore.');
+    }
+    const existing = this.readEnv();
+    const serviceKey =
+      String(serviceRoleKey || '').trim() || (existing.RTLINK_SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    if (!serviceKey) {
+      throw new Error(
+        'Paste the Supabase service_role key once. It is saved in backend/.env and never sent to a browser.'
+      );
+    }
+    const siteId = (existing.RTLINK_SITE_ID || '').trim() || randomUUID();
+    const site =
+      String(siteName || '').trim() ||
+      existing.RTLINK_SITE_NAME ||
+      existing.ORGANIZATION_NAME ||
+      'RealtimeSuite site';
+    await this.applyEnvValues({
+      RTLINK_SUPABASE_URL: fromProject.url,
+      RTLINK_SUPABASE_SERVICE_ROLE_KEY: serviceKey,
+      RTLINK_SITE_ID: siteId,
+      RTLINK_SITE_NAME: site,
+      RTLINK_ORG_CODE: code
+    });
+    this.log('system', `RTLink connected for organization code ${code} (site ${siteId}).`);
+    return this.rtlinkConfig();
+  }
+
   // ------------------------------------------------------------------ python
 
   async detectPython() {
@@ -412,6 +516,8 @@ class ServerManager extends EventEmitter {
   // ------------------------------------------------------------------- check
 
   async check() {
+    // Keep the backend's Supabase URL in step with rtlink/.env automatically.
+    await this.syncRtlinkEnv().catch(() => undefined);
     const envExists = fs.existsSync(this.envPath());
     const venvExists = fs.existsSync(this.venvPythonPath());
     const python = await this.detectPython();
@@ -440,7 +546,8 @@ class ServerManager extends EventEmitter {
         githubPollMinutes: Number(env.GITHUB_POLL_MINUTES || 5),
         hostBinding: (env.HOST || this.settings.host || '0.0.0.0') === '0.0.0.0' ? 'all network interfaces' : 'this computer only',
         portValid: Number.isInteger(Number(env.PORT || this.settings.port || 8000)) && Number(env.PORT || this.settings.port || 8000) >= 1 && Number(env.PORT || this.settings.port || 8000) <= 65535
-      }
+      },
+      rtlink: this.rtlinkConfig()
     };
   }
 

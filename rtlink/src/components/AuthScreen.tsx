@@ -1,7 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import { signIn } from '../lib/data';
 
-export function AuthScreen({ configured }: { configured: boolean }) {
+export function AuthScreen({
+  configured,
+  orgCode,
+  onChangeOrg
+}: {
+  configured: boolean;
+  orgCode: string;
+  onChangeOrg: () => void;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +34,10 @@ export function AuthScreen({ configured }: { configured: boolean }) {
         <span className="brand-mark large" aria-hidden="true">RT</span>
         <strong>RTLink</strong>
         <p>Your shifts, tasks and requests — wherever the day takes you.</p>
+        <button className="org-chip" type="button" onClick={onChangeOrg}>
+          <span>{orgCode}</span>
+          <small>Change organization</small>
+        </button>
       </div>
 
       {!configured && (
@@ -74,10 +86,14 @@ export function AuthScreen({ configured }: { configured: boolean }) {
 
 export function LinkRequiredScreen({
   email,
+  orgCode,
+  onChangeOrg,
   onSignOut,
   onRetry
 }: {
   email: string | null;
+  orgCode: string;
+  onChangeOrg: () => void;
   onSignOut: () => void;
   onRetry: () => void;
 }) {
@@ -90,12 +106,16 @@ export function LinkRequiredScreen({
           employee on your site yet.
         </p>
         <p className="muted small">
-          Ask your manager to check that your RealtimeSuite profile uses this same email address,
-          then refresh. The site pushes employee records within a few minutes.
+          Your schedule comes from <strong>{orgCode}</strong>. Ask your manager to check that your
+          RealtimeSuite profile uses this same email address, then refresh. The site pushes
+          employee records within a few minutes.
         </p>
         <div className="row-gap">
           <button className="btn primary" type="button" onClick={onRetry}>
             Check again
+          </button>
+          <button className="btn ghost" type="button" onClick={onChangeOrg}>
+            Different organization
           </button>
           <button className="btn ghost" type="button" onClick={onSignOut}>
             Sign out

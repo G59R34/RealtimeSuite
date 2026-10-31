@@ -65,6 +65,8 @@ class Settings:
         self.rtlink_supabase_key = os.getenv("RTLINK_SUPABASE_SERVICE_ROLE_KEY", "").strip()
         self.rtlink_site_id = os.getenv("RTLINK_SITE_ID", "").strip()
         self.rtlink_site_name = os.getenv("RTLINK_SITE_NAME", "").strip()
+        # Short code employees type to pick this organization in a shared project.
+        self.rtlink_org_code = os.getenv("RTLINK_ORG_CODE", "").strip().upper()
         self.rtlink_sync_minutes = max(1, int(os.getenv("RTLINK_SYNC_MINUTES", "5") or 5))
         self.rtlink_change_sync = _bool(os.getenv("RTLINK_CHANGE_SYNC"), True)
         self.rtlink_poll_seconds = max(3, int(os.getenv("RTLINK_POLL_SECONDS", "15") or 15))

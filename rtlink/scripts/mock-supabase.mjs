@@ -54,6 +54,7 @@ const TABLES = {
       id: SITE_ID,
       name: 'Denver Flagship',
       organization_name: 'Northwind Retail',
+      org_code: 'NORTHWIND',
       timezone: 'MDT',
       app_version: '1.0.0',
       last_sync_at: at(0, Math.max(0, new Date().getHours() - 1)),
@@ -519,10 +520,18 @@ function filterRows(rows, params) {
 }
 
 /** Row level security, approximated for the demo. */
-function scopeRows(table, rows, user) {
-  const me = TABLES.rtlink_employees.find((employee) => employee.email === user.email);
+function scopeRows(table, rows, user, orgCode) {
+  const site = orgCode
+    ? TABLES.rtlink_sites.find((row) => (row.org_code ?? '').toUpperCase() === orgCode)
+    : null;
+  if (orgCode && !site) return [];
+  const me = TABLES.rtlink_employees.find(
+    (employee) => employee.email === user.email && (!site || employee.site_id === site.id)
+  );
   if (!me) return [];
   switch (table) {
+    case 'rtlink_sites':
+      return rows.filter((row) => !site || row.id === site.id);
     case 'rtlink_employees':
       return rows.filter((row) => row.id === me.id);
     case 'rtlink_shifts':
@@ -769,6 +778,31 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname.startsWith('/rest/v1/rpc/')) {
+    const fn = url.pathname.split('/').pop();
+    if (fn === 'rtlink_lookup_org') {
+      const code = String(body?.p_code ?? '').trim().toUpperCase();
+      const site = TABLES.rtlink_sites.find((row) => (row.org_code ?? '').toUpperCase() === code);
+      json(
+        res,
+        200,
+        site
+          ? [
+              {
+                site_id: site.id,
+                site_name: site.name,
+                organization_name: site.organization_name,
+                org_code: site.org_code
+              }
+            ]
+          : []
+      );
+      return;
+    }
+    json(res, 404, { message: `Unknown rpc ${fn}` });
+    return;
+  }
+
   if (url.pathname.startsWith('/rest/v1/')) {
     const user = currentUser(req);
     if (!user) {
@@ -788,11 +822,12 @@ const server = createServer(async (req, res) => {
     }
 
     const params = url.searchParams;
+    const orgCode = String(req.headers['x-rtlink-org'] ?? '').trim().toUpperCase();
     const wantsSingle = (req.headers.accept ?? '').includes('vnd.pgrst.object');
     const prefer = req.headers.prefer ?? '';
 
     if (req.method === 'GET') {
-      const scoped = scopeRows(table, rows, user);
+      const scoped = scopeRows(table, rows, user, orgCode);
       const result = filterRows(scoped, params).map((row) => selectFields(row, params));
       if (wantsSingle) {
         if (result.length > 1) {
@@ -854,7 +889,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'PATCH') {
-      const scoped = scopeRows(table, rows, user);
+      const scoped = scopeRows(table, rows, user, orgCode);
       const matched = filterRows(scoped, params);
       for (const row of matched) Object.assign(row, body);
       json(res, 200, null);

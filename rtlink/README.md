@@ -48,9 +48,10 @@ RTLink asks the browser for a position and the LAN server verifies it with
 1. Create a project at [supabase.com](https://supabase.com) (one project per
    RealtimeSuite installation).
 2. Open **SQL Editor** and run
-   [`supabase/migrations/0001_rtlink.sql`](supabase/migrations/0001_rtlink.sql).
-   It creates the mirror tables, the action queue, the RLS policies and the
-   identity helpers. It is safe to re-run.
+   [`supabase/migrations/0001_rtlink.sql`](supabase/migrations/0001_rtlink.sql),
+   then [`supabase/migrations/0002_org_codes.sql`](supabase/migrations/0002_org_codes.sql).
+   They create the mirror tables, the action queue, the RLS policies, the
+   identity helpers and organization-code lookup. Both are safe to re-run.
 3. Under **Authentication → Providers**, keep email/password enabled. Either turn
    off "Confirm email" for internal rollouts or approve accounts manually.
 4. Under **Authentication → Users**, create an account for each employee **using
@@ -68,7 +69,35 @@ npm install
 npm run dev     # http://localhost:5175
 ```
 
-## 2. Point the RealtimeSuite site at RTLink
+## 2. Set the organization code
+
+Employees choose the organization before they sign in: they type a short code,
+RTLink looks it up and remembers it, and every request then carries
+`x-rtlink-org`. The database helpers in `0002_org_codes.sql` use that header to
+scope identity to the matching `rtlink_sites` row, so one Supabase project can
+serve more than one installation without exposing another site's rows.
+
+Codes are unique, 2–32 characters (letters, numbers, `-`, `_`) and stored
+upper-case.
+
+1. On the LAN server set the same code in `backend/.env`:
+
+```ini
+RTLINK_ORG_CODE=NORTHWIND
+```
+
+2. Restart the server (or run `python -m app.cli rtlink-sync`). The bridge writes
+   `org_code` into the site row it pushes to Supabase — there is nothing to edit
+   by hand in the SQL editor.
+
+3. At `rtlink_lookup_org` time the code must already exist, so push once before
+   handing the code to employees.
+
+Changing the code later means changing it in `backend/.env` **and** telling
+employees the new value; the old code stops resolving as soon as the next
+snapshot lands.
+
+## 3. Point the RealtimeSuite site at RTLink
 
 On the LAN server, add the RTLink values to `backend/.env`. The site id is
 generated once and then kept forever:
@@ -82,6 +111,7 @@ cd backend
 RTLINK_SUPABASE_URL=https://xxxx.supabase.co
 RTLINK_SUPABASE_SERVICE_ROLE_KEY=<service_role key, never the anon key>
 RTLINK_SITE_ID=<uuid from rtlink-site-id; keep it>
+RTLINK_ORG_CODE=NORTHWIND
 RTLINK_SITE_NAME=Denver Flagship
 RTLINK_SYNC_MINUTES=5
 RTLINK_CHANGE_SYNC=true
@@ -92,6 +122,23 @@ Restart the server. It pushes a baseline snapshot at startup, then every
 `RTLINK_SYNC_MINUTES`, and about two seconds after any local change (it LISTENs on
 the same `suite_realtime` channel as the rest of the suite). Employee actions are
 polled every `RTLINK_POLL_SECONDS`.
+
+### Setup from the desktop Server Manager
+
+The manager does the copying for you. It reads `VITE_SUPABASE_URL` from
+`rtlink/.env` on startup and whenever the checklist refreshes, and writes
+`RTLINK_SUPABASE_URL` when they differ. Open **Settings → RTLink employee app**
+to see the URL it found, then enter:
+
+- **Organization code** — the value employees type into RTLink.
+- **Site name** — display name pushed to Supabase.
+- **Service role key** — pasted once. It is stored in `backend/.env` only and the
+  manager never sends it back to the window.
+
+Saving generates `RTLINK_SITE_ID` the first time and keeps it afterwards. Restart
+the server to apply the new values. Placeholder URLs such as
+`https://your-project.supabase.co` are ignored, so an untouched `.env.example`
+cannot overwrite a working configuration.
 
 ### What is mirrored
 
@@ -147,7 +194,7 @@ cd backend
 failure count and the last actions applied. If Supabase is unreachable the LAN
 app is unaffected — scheduling keeps working and the failure shows up here.
 
-## 3. Local development without a Supabase project
+## 4. Local development without a Supabase project
 
 `scripts/mock-supabase.mjs` answers the slice of the Supabase API this app uses,
 with sample data for Jordan Avery and a colleague. It also simulates the LAN
@@ -161,12 +208,16 @@ npm run mock    # http://127.0.0.1:54321
 VITE_SUPABASE_URL=http://127.0.0.1:54321 VITE_SUPABASE_ANON_KEY=local-anon-key npm run dev
 ```
 
+The demo site's organization code is `NORTHWIND`; the mock resolves
+`rtlink_lookup_org` and scopes every table by the `x-rtlink-org` header, so the
+org gate behaves the same as against Supabase.
+
 Accounts: `jordan@northwind.test` (the demo employee) and
 `sam@northwind.test` (colleague for swaps) — password `RTLinkDemo!2026`.
 
 It has no RLS and no persistence; never use it with real data.
 
-## 4. Build and host
+## 5. Build and host
 
 ```bash
 cd rtlink

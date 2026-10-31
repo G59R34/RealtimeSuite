@@ -5,10 +5,12 @@ import { Card, Empty, Pill } from './ui';
 interface Props {
   workspace: Workspace;
   email: string | null;
+  orgCode: string;
+  onChangeOrg: () => void;
   onSignOut: () => void;
 }
 
-export function MeView({ workspace, email, onSignOut }: Props) {
+export function MeView({ workspace, email, orgCode, onChangeOrg, onSignOut }: Props) {
   const { employee, site, settings, training, actions } = workspace;
   const name = employee.full_name ?? email ?? 'Employee';
   const initials = name
@@ -36,6 +38,10 @@ export function MeView({ workspace, email, onSignOut }: Props) {
           <div>
             <dt>Organization</dt>
             <dd>{settings?.organization_name ?? site.organization_name ?? '—'}</dd>
+          </div>
+          <div>
+            <dt>Organization code</dt>
+            <dd>{orgCode}</dd>
           </div>
           <div>
             <dt>Time zone</dt>
@@ -104,6 +110,9 @@ export function MeView({ workspace, email, onSignOut }: Props) {
       </Card>
 
       <div className="sign-out">
+        <button className="btn ghost" type="button" onClick={onChangeOrg}>
+          Change organization code
+        </button>
         <button className="btn ghost" type="button" onClick={onSignOut}>
           Sign out
         </button>

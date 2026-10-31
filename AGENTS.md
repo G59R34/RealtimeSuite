@@ -230,6 +230,7 @@ keys in the OS user-data folder instead of the app bundle.
 | `CORP_SUPABASE_URL`, `CORP_SUPABASE_SERVICE_ROLE_KEY`, `CORP_SITE_ID`, `CORP_COMPANY_ID` | RealtimeCorp snapshot sync (§9). All four required for sync; blank = fully offline. |
 | `CORP_LOCATION_ID`, `CORP_SITE_NAME`, `CORP_SYNC_MINUTES`, `CORP_CHANGE_SYNC`, `CORP_SYNC_TIMEOUT_SECONDS` | Optional sync shape: location mapping, console display name, reconciliation interval (5), push-after-change (true), HTTP timeout (20). |
 | `RTLINK_SUPABASE_URL`, `RTLINK_SUPABASE_SERVICE_ROLE_KEY`, `RTLINK_SITE_ID` | RTLink employee-app sync (§10). All three required; blank = fully offline. One Supabase project per installation. |
+| `RTLINK_ORG_CODE` | Short code employees type into RTLink to choose this installation (2–32 characters, stored upper-case). Pushed to `rtlink_sites.org_code`. |
 | `RTLINK_SITE_NAME`, `RTLINK_SYNC_MINUTES`, `RTLINK_CHANGE_SYNC`, `RTLINK_POLL_SECONDS`, `RTLINK_SYNC_TIMEOUT_SECONDS` | Snapshot display name, reconciliation interval (5), push-after-change (true), employee-action poll interval (15 s), HTTP timeout (20). |
 
 `backend/.env` holds real secrets. Never print it, copy values into code, commit changes to it,
@@ -614,6 +615,16 @@ Supabase; the LAN installation stays the source of truth. Setup is in
   `auth.jwt()->>'email'` against `rtlink_employees.email`. A Supabase user without a matching
   `profiles.email` sees the "Almost there" screen. Changing an employee's email means updating
   both sides.
+- **Organization code.** Before sign-in the app asks for a code, stores it in localStorage and
+  sends it as `x-rtlink-org` on every Supabase request (`lib/supabase.ts`). Migration
+  `0002_org_codes.sql` adds `rtlink_sites.org_code`, the `rtlink_lookup_org(text)` RPC and makes
+  the helpers resolve the site from that header, so one project can host several installations.
+  The code comes from `RTLINK_ORG_CODE` and is pushed with the site row; changing it requires a
+  push before employees can use the new value.
+- **Desktop setup.** The Server Manager reads `VITE_SUPABASE_URL` from `rtlink/.env` and copies it
+  into `RTLINK_SUPABASE_URL` on startup and on every checklist refresh; Settings → RTLink saves
+  the org code, site name and service key, generating `RTLINK_SITE_ID` once. Only the URL is
+  copied — the service key is entered once and never read back into the renderer.
 - **Employees only insert into `rtlink_requests`.** A before-insert trigger overwrites
   `employee_id`/`site_id` from the helpers and forces `status='pending'`, so a client cannot
   spoof attribution or mark its own action applied. There are no update/delete policies on any

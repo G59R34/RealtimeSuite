@@ -37953,3 +37953,51 @@
 2026-10-31 17:12:05.768 MDT [49975] ERROR:  Organization context is required.
 2026-10-31 17:12:05.768 MDT [49975] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
 2026-10-31 17:12:05.768 MDT [49975] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:12:35.789 MDT [50082] ERROR:  Authentication is required.
+2026-10-31 17:12:35.789 MDT [50082] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:12:35.789 MDT [50082] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:12:35.791 MDT [50277] ERROR:  Organization context is required.
+2026-10-31 17:12:35.791 MDT [50277] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:12:35.791 MDT [50277] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:13:05.808 MDT [50082] ERROR:  Authentication is required.
+2026-10-31 17:13:05.808 MDT [50082] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:13:05.808 MDT [50082] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:13:05.811 MDT [50277] ERROR:  Organization context is required.
+2026-10-31 17:13:05.811 MDT [50277] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:13:05.811 MDT [50277] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:13:35.829 MDT [49614] ERROR:  Authentication is required.
+2026-10-31 17:13:35.829 MDT [49614] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:13:35.829 MDT [49614] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:13:35.832 MDT [49975] ERROR:  Organization context is required.
+2026-10-31 17:13:35.832 MDT [49975] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:13:35.832 MDT [49975] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:14:05.850 MDT [49614] ERROR:  Authentication is required.
+2026-10-31 17:14:05.850 MDT [49614] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:14:05.850 MDT [49614] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:14:05.854 MDT [49975] ERROR:  Organization context is required.
+2026-10-31 17:14:05.854 MDT [49975] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:14:05.854 MDT [49975] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:14:35.874 MDT [50277] ERROR:  Authentication is required.
+2026-10-31 17:14:35.874 MDT [50277] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:14:35.874 MDT [50277] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:14:35.877 MDT [50000] ERROR:  Organization context is required.
+2026-10-31 17:14:35.877 MDT [50000] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:14:35.877 MDT [50000] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:15:05.895 MDT [50277] ERROR:  Authentication is required.
+2026-10-31 17:15:05.895 MDT [50277] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:15:05.895 MDT [50277] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:15:05.897 MDT [50000] ERROR:  Organization context is required.
+2026-10-31 17:15:05.897 MDT [50000] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:15:05.897 MDT [50000] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:15:35.912 MDT [49975] ERROR:  Authentication is required.
+2026-10-31 17:15:35.912 MDT [49975] CONTEXT:  PL/pgSQL function process_due_shift_break_resumes() line 7 at RAISE
+2026-10-31 17:15:35.912 MDT [49975] STATEMENT:  select public.process_due_shift_break_resumes()
+2026-10-31 17:15:35.914 MDT [50082] ERROR:  Organization context is required.
+2026-10-31 17:15:35.914 MDT [50082] CONTEXT:  PL/pgSQL function process_due_shift_auto_clock_outs() line 9 at RAISE
+2026-10-31 17:15:35.914 MDT [50082] STATEMENT:  select public.process_due_shift_auto_clock_outs()
+2026-10-31 17:15:41.530 MDT [62414] LOG:  checkpoint starting: time
+2026-10-31 17:15:41.640 MDT [62414] LOG:  checkpoint complete: wrote 2 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.001 s, total=0.110 s; sync files=2, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=4091 kB; lsn=0/640CE18, redo lsn=0/640CDE0
+2026-10-31 17:18:48.563 MDT [62414] LOG:  checkpoint starting: immediate force wait
+2026-10-31 17:18:48.566 MDT [62414] LOG:  checkpoint complete: wrote 9 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.003 s; sync files=8, longest=0.001 s, average=0.001 s; distance=4964 kB, estimate=4964 kB; lsn=0/68E5FD0, redo lsn=0/68E5F98
+2026-10-31 17:23:48.567 MDT [62414] LOG:  checkpoint starting: time
+2026-10-31 17:23:49.801 MDT [62414] LOG:  checkpoint complete: wrote 13 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.225 s, sync=0.002 s, total=1.234 s; sync files=9, longest=0.001 s, average=0.001 s; distance=48 kB, estimate=4472 kB; lsn=0/68F22C0, redo lsn=0/68F2288

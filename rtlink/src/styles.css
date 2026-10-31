@@ -1081,6 +1081,35 @@ code {
   font-size: 0.84rem;
 }
 
+.org-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 5px 12px;
+  border: 1px solid #cfdcef;
+  border-radius: 999px;
+  background: #fff;
+  color: #2a518f;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.org-chip span {
+  letter-spacing: 0.06em;
+}
+
+.org-chip small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.org-chip:hover {
+  background: var(--blue-soft);
+}
+
 .auth-card {
   display: flex;
   flex-direction: column;
