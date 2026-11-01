@@ -275,6 +275,15 @@ def main() -> None:
     sub.add_parser("rtlink-sync", help="Push an RTLink snapshot now")
     sub.add_parser("rtlink-pull", help="Apply pending RTLink employee actions now")
     sub.add_parser("rtlink-actions", help="Show employee actions applied from RTLink")
+
+    auth_user = sub.add_parser(
+        "rtlink-auth-user",
+        help="Create or reset the Supabase sign-in an employee uses in RTLink",
+    )
+    auth_user.add_argument("--email", required=True)
+    auth_user.add_argument("--name")
+    auth_user.add_argument("--password")
+    auth_user.add_argument("--password-stdin", action="store_true")
     sub.add_parser(
         "rtlink-site-id",
         help="Print a new RTLink site id and the env lines to paste",
@@ -354,6 +363,16 @@ def main() -> None:
         from .rtlink_bridge import recent, status
 
         print(json.dumps({"status": status(), "recent": recent(50)}, indent=2, default=str))
+        return
+    if args.command == "rtlink-auth-user":
+        from .rtlink_bridge import RtlinkError, ensure_auth_user
+
+        password = _read_password(args.password, args.password_stdin)
+        try:
+            result = ensure_auth_user(args.email, password, args.name)
+        except RtlinkError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2, default=str))
         return
     if args.command == "corp-sync":
         from .corp_sync import sync_now

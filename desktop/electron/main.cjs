@@ -231,8 +231,8 @@ function registerIpc() {
     return { detail };
   });
   ipcMain.handle('manager:reset-password', async (_event, payload) => {
-    const detail = await manager.resetPassword(payload || {});
-    return { detail };
+    const result = await manager.resetPassword(payload || {});
+    return { detail: result.detail, rtlink: result.rtlink };
   });
   ipcMain.handle('manager:set-org-name', async (_event, name) => {
     try {
@@ -250,7 +250,8 @@ function registerIpc() {
   });
   ipcMain.handle('manager:create-user', async (_event, payload) => {
     try {
-      return { ok: true, users: await manager.createUser(payload || {}) };
+      const result = await manager.createUser(payload || {});
+      return { ok: true, users: result.users, rtlink: result.rtlink };
     } catch (error) {
       return { ok: false, error: error.message };
     }

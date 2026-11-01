@@ -485,6 +485,7 @@
               <button type="button" class="primary" id="btn-save-rtlink">Save RTLink settings</button>
             </div>
             <p class="hint">The URL is copied from <code>rtlink/.env</code> automatically. The service_role key stays in <code>backend/.env</code> and never reaches a browser. Restart the server after saving.</p>
+            <p class="hint">Accounts you create or reset here are also created in Supabase Auth, so employees sign in to RTLink with the same email and password. Accounts that already existed need one password reset to get a matching RTLink sign-in.</p>
             <p class="hint" id="rtlink-status" role="status"></p>
           </article>
 

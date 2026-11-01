@@ -647,7 +647,11 @@ class ServerManager extends EventEmitter {
       '--password', String(password)
     ]);
     if (result.code !== 0) throw new Error('Password reset failed. Check that the account exists.');
-    return result.output;
+    const rtlink = await this.syncRtlinkCredentials({
+      email: String(email).trim().toLowerCase(),
+      password: String(password)
+    });
+    return { detail: result.output.trim(), rtlink };
   }
 
   // -------------------------------------------------------------- admin CLI
@@ -697,7 +701,34 @@ class ServerManager extends EventEmitter {
       ['create-user', '--email', cleanEmail, '--name', cleanName, '--role', 'employee', '--password-stdin'],
       `${cleanPassword}\n`
     );
-    return this.listUsers();
+    const users = await this.listUsers();
+    const rtlink = await this.syncRtlinkCredentials({
+      email: cleanEmail,
+      password: cleanPassword,
+      name: cleanName
+    });
+    return { users, rtlink };
+  }
+
+  /**
+   * RTLink signs in through Supabase Auth, which is a separate user table from
+   * RealtimeSuite's Postgres accounts. Mirror the credential whenever the
+   * plaintext is known (account creation, password reset); otherwise Supabase
+   * answers "invalid login credentials" for an account that works locally.
+   */
+  async syncRtlinkCredentials({ email, password, name }) {
+    if (!this.rtlinkConfig().configured) return { skipped: true };
+    const args = ['rtlink-auth-user', '--email', String(email)];
+    if (name) args.push('--name', String(name));
+    args.push('--password-stdin');
+    try {
+      await this.cli(args, `${password}\n`);
+      this.log('system', `RTLink sign-in ready for ${email}.`);
+      return { ok: true };
+    } catch (error) {
+      this.log('system', `RTLink sign-in for ${email} not synced: ${error.message}`);
+      return { ok: false, error: error.message };
+    }
   }
 
   async deleteUser({ email }) {

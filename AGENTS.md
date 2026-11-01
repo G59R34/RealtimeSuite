@@ -615,6 +615,12 @@ Supabase; the LAN installation stays the source of truth. Setup is in
   `auth.jwt()->>'email'` against `rtlink_employees.email`. A Supabase user without a matching
   `profiles.email` sees the "Almost there" screen. Changing an employee's email means updating
   both sides.
+- **Sign-in is a second account table.** RealtimeSuite users live in Postgres; RTLink users live
+  in Supabase Auth, so a Server Manager account answers "invalid login credentials" in RTLink
+  until the same email and password exist in Supabase. The manager mirrors the credential on
+  account creation and password reset (`python -m app.cli rtlink-auth-user`, which calls
+  `rtlink_bridge.ensure_auth_user()`). There is no plaintext to mirror later, so a password
+  changed inside the web app needs one Reset password from the manager before RTLink accepts it.
 - **Organization code.** Before sign-in the app asks for a code, stores it in localStorage and
   sends it as `x-rtlink-org` on every Supabase request (`lib/supabase.ts`). Migration
   `0002_org_codes.sql` adds `rtlink_sites.org_code`, the `rtlink_lookup_org(text)` RPC and makes
@@ -642,6 +648,21 @@ Supabase; the LAN installation stays the source of truth. Setup is in
   `clock_out_shift`, `clock_in_unscheduled_shift` with the employee's actor GUC set via
   `session_scope(employee_id, 'authenticated')`. `require_active_employee` blocks suspended,
   probationary and on-leave employees exactly as on the LAN.
+- **Delivery is near-instant, and must stay that way.** The push worker wakes on the
+  `suite_realtime` notification, waits `CHANGE_SETTLE_SECONDS` (0.35) so the write commits, then
+  delivers; a failed push retries with backoff (cap 30 s) instead of waiting for the interval.
+  Actions are pulled every `RTLINK_POLL_SECONDS` (default 2) and applied results are pushed
+  immediately. RTLink polls `public.rtlink_sync_stamp()` (migration `0003`, one tiny read) every
+  2 s and reloads only when a snapshot actually landed, so there is no Supabase Realtime
+  publication to configure and the local mock behaves like production.
+- **The service key must be able to acknowledge.** `rtlink_requests_validate` (migration `0004`)
+  lets `service_role` through unchanged, because the LAN bridge has no end-user JWT and would
+  otherwise fail every status write. Employee inserts still get their attribution forced.
+- **Employee mirror rows are unique per site by email** (`rtlink_employees_site_email_idx`). A
+  re-created profile keeps the same email but a new id, so `sync_now()` drops the stale mirror row
+  before the employees upsert; without that, every push fails with `23505` and RTLink freezes on
+  its last snapshot. Prune/delete URLs percent-encode timestamps (`+00:00` becomes a space in a
+  query string and raises `22007`).
 - **Delivery is at-least-once.** `public.rtlink_action_log` (SQL addition 007) records every
   action id before the result is acknowledged; three failures mark it `failed` with a message
   the employee sees. Never apply a logged `applied` action again.

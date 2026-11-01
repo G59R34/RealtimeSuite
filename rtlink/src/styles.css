@@ -31,6 +31,13 @@ body {
   min-height: 100%;
 }
 
+html {
+  /* Keep focused fields clear of the sticky header and the bottom tab bar. */
+  scroll-padding-top: 72px;
+  scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   background:
     radial-gradient(900px 320px at 10% -8%, #dce9fb 0%, rgba(220, 233, 251, 0) 70%),
@@ -48,6 +55,13 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+  /* No double-tap zoom delay and no grey tap flash on phones. */
+  touch-action: manipulation;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
 }
 
 h1,
@@ -207,9 +221,22 @@ code {
 }
 
 .sync-stamp {
+  max-width: 104px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--muted);
   font-size: 0.68rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.sync-stamp:active {
+  background: var(--blue-soft);
 }
 
 .app-main {
@@ -415,6 +442,7 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  user-select: none;
   gap: 6px;
   min-height: 44px;
   padding: 9px 18px;
@@ -515,13 +543,20 @@ code {
 .field select,
 .field textarea {
   width: 100%;
-  min-height: 44px;
-  padding: 9px 11px;
+  min-height: 46px;
+  padding: 10px 12px;
   border: 1px solid #d5e0f0;
   border-radius: 11px;
   background: #fbfdff;
   color: var(--ink);
-  font-size: 0.88rem;
+  /* 16px keeps iOS Safari from zooming the page when a field gets focus. */
+  font-size: 16px;
+}
+
+.field input[type='date'],
+.field input[type='time'] {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .field textarea {
@@ -906,7 +941,11 @@ code {
   border-radius: 14px;
   background: #fff;
   overflow-x: auto;
+  /* A horizontal swipe here must not drag the page with it. */
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 .requests-tabs::-webkit-scrollbar {
@@ -916,6 +955,7 @@ code {
 .requests-tabs button {
   flex: 1 0 auto;
   padding: 8px 12px;
+  scroll-snap-align: start;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -1085,8 +1125,9 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-height: 40px;
   margin-top: 4px;
-  padding: 5px 12px;
+  padding: 7px 14px;
   border: 1px solid #cfdcef;
   border-radius: 999px;
   background: #fff;
@@ -1179,6 +1220,153 @@ code {
 
   .shift-time {
     min-width: 128px;
+  }
+}
+
+/* ---------------------------------------------------------------- mobile --- */
+
+/* Touch screens: comfortable targets and no sticky hover states. */
+@media (pointer: coarse) {
+  .btn.small {
+    min-height: 44px;
+    padding: 9px 14px;
+    font-size: 0.8rem;
+  }
+
+  .icon-button {
+    width: 42px;
+    height: 42px;
+  }
+
+  .requests-tabs button {
+    min-height: 44px;
+  }
+
+  .org-chip {
+    min-height: 40px;
+  }
+
+  .app-nav button {
+    padding: 8px 2px 6px;
+  }
+
+  .app-nav button:active {
+    background: var(--blue-soft);
+  }
+}
+
+@media (hover: none) {
+  .btn.primary:hover:not(:disabled) {
+    background: linear-gradient(160deg, #356fc9, #1d4f9c);
+  }
+
+  .btn.ghost:hover:not(:disabled),
+  .org-chip:hover {
+    background: #fff;
+  }
+}
+
+/* Narrow phones: keep one glance per row, and let the title breathe. */
+@media (max-width: 430px) {
+  .app-header {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+
+  .app-main {
+    padding: 12px max(14px, env(safe-area-inset-right)) 26px max(14px, env(safe-area-inset-left));
+  }
+
+  .app-nav {
+    padding-left: max(6px, env(safe-area-inset-left));
+    padding-right: max(6px, env(safe-area-inset-right));
+    box-shadow: 0 -10px 24px -20px rgba(16, 35, 63, 0.7);
+  }
+
+  .brand-text span {
+    max-width: 36vw;
+  }
+
+  .sync-stamp {
+    max-width: 76px;
+    font-size: 0.65rem;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  .clock-card {
+    padding: 16px;
+  }
+
+  /* The clock action is the one thing an employee taps in a hurry. */
+  .clock-card > .btn,
+  .clock-actions .btn {
+    width: 100%;
+    min-height: 50px;
+    font-size: 0.9rem;
+  }
+
+  .shift-time {
+    min-width: 86px;
+  }
+
+  .shift-time strong {
+    font-size: 0.82rem;
+  }
+
+  .shift-area {
+    font-size: 0.82rem;
+  }
+
+  .history-type {
+    width: 52px;
+    font-size: 0.62rem;
+  }
+
+  .detail-list dd {
+    overflow-wrap: anywhere;
+  }
+
+  .week-strip {
+    gap: 4px;
+  }
+
+  .week-day {
+    padding: 7px 1px;
+  }
+
+  .week-day small {
+    font-size: 0.58rem;
+  }
+
+  .auth-shell {
+    padding-bottom: max(28px, calc(22px + env(safe-area-inset-bottom)));
+  }
+
+  .app-nav button span {
+    font-size: 0.62rem;
+  }
+}
+
+/* Landscape phones: the header should not eat the clock card. */
+@media (max-height: 480px) and (orientation: landscape) {
+  .app-header {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .greeting {
+    display: none;
+  }
+
+  .clock-main {
+    margin: 8px 0 10px;
+  }
+
+  .clock-card {
+    padding: 14px 16px;
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { ViewMode, Workspace } from '../types';
 import { formatTime } from '../lib/format';
 
@@ -22,6 +22,19 @@ const TABS: { id: ViewMode; label: string; path: string }[] = [
   { id: 'me', label: 'Me', path: 'M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM4 21a8 8 0 0 1 16 0' }
 ];
 
+/** "Updated 2 min ago" — reads as freshness, where a bare clock time reads as a timestamp. */
+function syncLabel(iso: string | null | undefined, now: number): string {
+  if (!iso) return 'Not synced';
+  const at = new Date(iso).getTime();
+  if (!Number.isFinite(at)) return 'Not synced';
+  const minutes = Math.max(0, Math.round((now - at) / 60000));
+  if (minutes < 1) return 'Updated just now';
+  if (minutes < 60) return `Updated ${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Updated ${hours} h ago`;
+  return `Updated ${formatTime(iso)}`;
+}
+
 function NavIcon({ path }: { path: string }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -44,6 +57,14 @@ export function AppShell({
   const organization =
     workspace.settings?.organization_name ?? workspace.site.organization_name ?? workspace.site.name;
   const firstName = (workspace.employee.full_name ?? email ?? 'there').split(' ')[0];
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const freshness = syncLabel(workspace.site.last_sync_at, now);
 
   return (
     <div className="app-shell">
@@ -74,14 +95,20 @@ export function AppShell({
               />
             </svg>
           </button>
-          <span className="sync-stamp">
-            {workspace.site.last_sync_at ? `Updated ${formatTime(workspace.site.last_sync_at)}` : 'Not synced'}
-          </span>
+          <button
+            className="sync-stamp"
+            type="button"
+            onClick={onRefresh}
+            title="Refresh now"
+            aria-label={`${freshness}. Refresh now.`}
+          >
+            {freshness}
+          </button>
         </div>
       </header>
 
       {(error || notice) && (
-        <div className={`banner ${error ? 'banner-error' : 'banner-ok'}`} role="status">
+        <div className={`banner ${error ? 'banner-error' : 'banner-ok'}`} role="status" aria-live="polite">
           {error ?? notice}
         </div>
       )}

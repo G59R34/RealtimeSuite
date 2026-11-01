@@ -231,6 +231,35 @@ embedded and both are public by design.
 Add the deployed origin to Supabase **Authentication → URL Configuration** so
 confirmation and password-reset links return to RTLink.
 
+## 6. Signing in
+
+RTLink authenticates against Supabase Auth, which is a separate user table from RealtimeSuite's
+Postgres accounts. An employee created in the Server Manager therefore cannot sign in to RTLink
+until the same email and password exist in Supabase, so the manager mirrors the credential when
+it creates an account or resets a password (`python -m app.cli rtlink-auth-user`). For accounts
+that existed before RTLink was connected, use **Reset password** once in the manager; both logins
+then accept the new password.
+
+Sign-in is by email: the SQL helpers match the Supabase user's email against
+`rtlink_employees.email`, which the bridge pushes from `profiles.email`. A Supabase user with no
+matching employee sees the "Almost there" screen.
+
+## 7. Keeping the app current
+
+A local change is pushed within a fraction of a second (0.35 s settle) instead of waiting for
+the five minute reconciliation, and a failed push retries with backoff. Employee actions are
+pulled every `RTLINK_POLL_SECONDS` (2 s by default), applied through the same SQL functions the
+LAN UI uses, and acknowledged back immediately.
+
+Migrations `0003` (sync stamp) and `0004` (let the site acknowledge queued actions) must be
+applied in Supabase for that; without `0004` the LAN site cannot mark requests applied, and
+without `0003` the app falls back to refreshing every 15 seconds.
+
+In the browser, `rtlink_sync_stamp()` (migration `0003`) returns a value that changes with every
+delivered snapshot. RTLink polls that one small read every two seconds, reloads the workspace
+only when the stamp moves, pauses while the tab is hidden, and still does a full refresh once a
+minute. No Supabase Realtime publication is needed, so the local mock behaves like production.
+
 ## Verification
 
 ```bash

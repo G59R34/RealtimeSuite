@@ -362,6 +362,56 @@ test('user creation validates input before touching the environment', async () =
   await assert.rejects(manager.deleteUser({ email: '' }), /account/i);
 });
 
+test('account creation mirrors the RTLink sign-in when Supabase is configured', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-rtlink-auth-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  await manager.ensureEnvFile();
+  await manager.applyEnvValues({
+    RTLINK_SUPABASE_URL: 'https://project.supabase.co',
+    RTLINK_SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    RTLINK_SITE_ID: '11111111-1111-4111-8111-111111111111'
+  });
+
+  const calls = [];
+  manager.cli = async (args, input) => {
+    calls.push({ args, input });
+    return '';
+  };
+  manager.listUsers = async () => [];
+
+  const result = await manager.createUser({
+    email: 'New.Hire@Example.com',
+    name: 'New Hire',
+    password: 'temporary-pass'
+  });
+
+  assert.equal(result.rtlink.ok, true);
+  assert.deepEqual(calls[1], {
+    args: ['rtlink-auth-user', '--email', 'new.hire@example.com', '--name', 'New Hire', '--password-stdin'],
+    input: 'temporary-pass\n'
+  });
+});
+
+test('RTLink sign-in mirroring is skipped when the bridge is not configured', async () => {
+  const backendDir = tempBackend();
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-rtlink-off-'));
+  const manager = new ServerManager({ backendDir, userDataDir });
+  await manager.ensureEnvFile();
+
+  const calls = [];
+  manager.cli = async (args, input) => {
+    calls.push({ args, input });
+    return '';
+  };
+  manager.listUsers = async () => [];
+
+  const result = await manager.createUser({ email: 'a@b.c', name: 'A B', password: 'longenough' });
+
+  assert.deepEqual(result.rtlink, { skipped: true });
+  assert.equal(calls.length, 1);
+});
+
 test('corporate-owned controls refuse local writes', async () => {
   const backendDir = tempBackend();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-user-'));

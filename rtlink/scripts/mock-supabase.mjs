@@ -25,8 +25,8 @@ const OPS_AREA = 'b2000000-0000-4000-8000-000000000001';
 const FLOOR_AREA = 'b2000000-0000-4000-8000-000000000002';
 
 const users = [
-  { id: JORDAN_ID, email: 'jordan@northwind.test', name: 'Jordan Avery' },
-  { id: SAM_ID, email: 'sam@northwind.test', name: 'Sam Patel' }
+  { id: JORDAN_ID, email: 'jordan@northwind.test', name: 'Jordan Avery', password: PASSWORD },
+  { id: SAM_ID, email: 'sam@northwind.test', name: 'Sam Patel', password: PASSWORD }
 ];
 
 function at(dayOffset, hour, minute = 0) {
@@ -715,6 +715,18 @@ async function applyQueuedAction(action) {
     action.processed_at = new Date().toISOString();
     action.attempts = 1;
   }
+
+  // The real bridge writes a sync event after every push; the app watches the
+  // resulting stamp to reload without waiting for a timer.
+  TABLES.rtlink_sync_events.unshift({
+    id: randomUUID(),
+    site_id: SITE_ID,
+    kind: 'action',
+    status: 'ok',
+    record_counts: {},
+    message: null,
+    received_at: new Date().toISOString()
+  });
 }
 
 const server = createServer(async (req, res) => {
@@ -753,11 +765,58 @@ const server = createServer(async (req, res) => {
       return;
     }
     const user = users.find((item) => item.email === String(body?.email ?? '').toLowerCase());
-    if (!user || body?.password !== PASSWORD) {
+    if (!user || body?.password !== user.password) {
       json(res, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials' });
       return;
     }
     json(res, 200, makeSession(user));
+    return;
+  }
+
+  // Admin API: the LAN bridge mirrors RealtimeSuite accounts here so employees
+  // sign in to RTLink with the same email and password.
+  if (url.pathname === '/auth/v1/admin/users' && req.method === 'GET') {
+    const page = Number(url.searchParams.get('page') ?? 1);
+    const perPage = Number(url.searchParams.get('per_page') ?? 200);
+    const start = (page - 1) * perPage;
+    json(res, 200, {
+      users: users.slice(start, start + perPage).map(userPayload),
+      aud: 'authenticated'
+    });
+    return;
+  }
+
+  if (url.pathname === '/auth/v1/admin/users' && req.method === 'POST') {
+    const email = String(body?.email ?? '').trim().toLowerCase();
+    if (!email || !body?.password) {
+      json(res, 422, { code: 422, msg: 'Email and password are required' });
+      return;
+    }
+    if (users.some((item) => item.email === email)) {
+      json(res, 422, { code: 422, msg: 'User already registered' });
+      return;
+    }
+    const user = {
+      id: randomUUID(),
+      email,
+      name: body?.user_metadata?.full_name || email,
+      password: String(body.password)
+    };
+    users.push(user);
+    json(res, 200, userPayload(user));
+    return;
+  }
+
+  if (url.pathname.startsWith('/auth/v1/admin/users/') && req.method === 'PUT') {
+    const id = url.pathname.split('/').pop();
+    const user = users.find((item) => item.id === id);
+    if (!user) {
+      json(res, 404, { code: 404, msg: 'User not found' });
+      return;
+    }
+    if (body?.password) user.password = String(body.password);
+    if (body?.user_metadata?.full_name) user.name = String(body.user_metadata.full_name);
+    json(res, 200, userPayload(user));
     return;
   }
 
@@ -780,6 +839,15 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname.startsWith('/rest/v1/rpc/')) {
     const fn = url.pathname.split('/').pop();
+    if (fn === 'rtlink_sync_stamp') {
+      const events = TABLES.rtlink_sync_events.filter((row) => row.site_id === SITE_ID);
+      const latest = events.reduce(
+        (max, row) => (String(row.received_at) > max ? String(row.received_at) : max),
+        '-'
+      );
+      json(res, 200, `${latest}:${events.length}`);
+      return;
+    }
     if (fn === 'rtlink_lookup_org') {
       const code = String(body?.p_code ?? '').trim().toUpperCase();
       const site = TABLES.rtlink_sites.find((row) => (row.org_code ?? '').toUpperCase() === code);

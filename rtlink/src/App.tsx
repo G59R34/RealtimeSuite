@@ -8,9 +8,17 @@ import { ScheduleView } from './components/ScheduleView';
 import { TasksView } from './components/TasksView';
 import { RequestsView } from './components/RequestsView';
 import { MeView } from './components/MeView';
-import { fetchWorkspace, signOut, submitAction } from './lib/data';
+import { fetchSyncStamp, fetchWorkspace, signOut, submitAction } from './lib/data';
 import { clearOrgCode, getOrgCode, supabase, supabaseConfigured } from './lib/supabase';
 import type { ActionKind, ViewMode, Workspace } from './types';
+
+// How often to ask the site whether a new snapshot arrived, and how often to
+// reload anyway in case a stamp was missed.
+const STAMP_POLL_MS = 2000;
+const FULL_REFRESH_MS = 60000;
+// Used when the stamp check itself keeps failing (a site that has not applied the
+// stamp migration yet): slower, but the app still refreshes on its own.
+const FALLBACK_REFRESH_MS = 15000;
 
 const ACTION_NOTICES: Record<ActionKind, string> = {
   'time_off.create': 'Time off request sent to your manager.',
@@ -34,6 +42,8 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [orgCode, setOrgCodeState] = useState<string>(() => getOrgCode());
   const timers = useRef<number[]>([]);
+  const stampRef = useRef<string | null>(null);
+  const lastFullRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -61,6 +71,7 @@ export default function App() {
       const next = await fetchWorkspace();
       setWorkspace(next);
       setError(null);
+      lastFullRef.current = Date.now();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load your schedule.');
     } finally {
@@ -72,12 +83,46 @@ export default function App() {
     if (session) void load();
   }, [session, load]);
 
-  // The site pushes changes on its own schedule; a light poll keeps the phone
-  // current without realtime publication setup.
+  // Every delivered snapshot bumps a stamp in rtlink_sync_events, so checking it
+  // is one tiny request. Poll it often and reload the workspace only when the
+  // data actually moved; a slow full refresh covers a missed stamp.
   useEffect(() => {
     if (!session) return;
-    const timer = window.setInterval(() => void load(true), 30000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let inFlight = false;
+    let failures = 0;
+
+    const poll = async () => {
+      if (cancelled || inFlight || document.visibilityState === 'hidden') return;
+      inFlight = true;
+      try {
+        const stamp = await fetchSyncStamp();
+        const stale =
+          Date.now() - lastFullRef.current >=
+          (failures >= 3 ? FALLBACK_REFRESH_MS : FULL_REFRESH_MS);
+        failures = 0;
+        if (stale || (stamp && stamp !== stampRef.current)) {
+          stampRef.current = stamp ?? stampRef.current;
+          await load(true);
+        }
+      } catch {
+        failures += 1;
+        // Keep showing the last good workspace; the next tick retries.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = window.setInterval(() => void poll(), STAMP_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void poll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [session, load]);
 
   useEffect(() => {
@@ -97,9 +142,9 @@ export default function App() {
       await submitAction(workspace.employee.id, workspace.site.id, kind, payload);
       setNotice(ACTION_NOTICES[kind]);
       await load(true);
-      // The LAN site applies queued actions on a short poll; refresh again so
-      // the result shows without the employee pulling to reload.
-      [4000, 12000].forEach((ms) => {
+      // The stamp poll usually shows the applied result within a couple of
+      // seconds; these refreshes cover the first push landing slightly later.
+      [1500, 5000].forEach((ms) => {
         timers.current.push(window.setTimeout(() => void load(true), ms));
       });
     },

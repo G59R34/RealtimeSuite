@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
@@ -198,6 +199,12 @@ _state: dict[str, Any] = {
     "failures": 0,
 }
 
+# Actions whose acknowledgement was rejected (for example a site that has not
+# applied migration 0004) are retried on a timer instead of on every 2s poll.
+_ack_retry_at: dict[str, float] = {}
+ACK_RETRY_SECONDS = 20.0
+_ack_hint_logged = False
+
 _action_state: dict[str, Any] = {
     "last_poll_at": None,
     "last_success_at": None,
@@ -216,6 +223,10 @@ class RtlinkError(RuntimeError):
 
 class ActionError(RuntimeError):
     """An employee action was rejected; the message is shown in RTLink."""
+
+
+class TerminalAction(ActionError):
+    """An action that cannot succeed by retrying (for example a removed account)."""
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +291,43 @@ def _with_retries(action: Callable[[], None], label: str) -> None:
             delay *= 2
 
 
+def _drop_orphan_employees(rows: list[dict[str, Any]]) -> None:
+    """Remove mirror employee rows whose id changed but whose email did not.
+
+    Supabase keeps ``(site_id, lower(email))`` unique, so a re-created profile
+    (new id, same email) cannot be merged by an id upsert: every push fails with
+    23505 and the whole site stops updating. The mirror row belongs to this site,
+    so drop the stale one and let the snapshot insert the current row.
+    """
+    if not rows:
+        return
+    existing = _request(
+        "GET",
+        f"/rest/v1/rtlink_employees?select=id,email&site_id=eq.{settings.rtlink_site_id}",
+    )
+    if not isinstance(existing, list):
+        return
+    wanted = {str(row["id"]) for row in rows}
+    emails = {str(row.get("email") or "").strip().lower() for row in rows}
+    orphans = [
+        str(row["id"])
+        for row in existing
+        if str(row.get("id")) not in wanted
+        and str(row.get("email") or "").strip().lower() in emails
+    ]
+    if not orphans:
+        return
+    _with_retries(
+        lambda: _request(
+            "DELETE",
+            f"/rest/v1/rtlink_employees?id=in.({','.join(orphans)})",
+            prefer="return=minimal",
+        ),
+        "drop stale employee rows",
+    )
+    logger.info("RTLink removed %s stale employee row(s) before delivery", len(orphans))
+
+
 def _upsert(table: str, rows: list[dict[str, Any]], conflict: str = "id") -> None:
     if not rows:
         return
@@ -292,6 +340,76 @@ def _upsert(table: str, rows: list[dict[str, Any]], conflict: str = "id") -> Non
         ),
         f"upsert {table}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Supabase Auth: the sign-in employees use for RTLink
+# ---------------------------------------------------------------------------
+
+def _auth_error_means_exists(exc: RtlinkError) -> bool:
+    message = str(exc).lower()
+    return "already" in message or "registered" in message or "exists" in message
+
+
+def _find_auth_user(email: str) -> dict[str, Any] | None:
+    wanted = email.strip().lower()
+    for page in range(1, 11):
+        listing = _request("GET", f"/auth/v1/admin/users?page={page}&per_page=200")
+        users = listing.get("users") if isinstance(listing, dict) else listing
+        if not isinstance(users, list) or not users:
+            return None
+        for user in users:
+            if isinstance(user, dict) and str(user.get("email") or "").lower() == wanted:
+                return user
+        if len(users) < 200:
+            return None
+    return None
+
+
+def ensure_auth_user(email: str, password: str, full_name: str | None = None) -> dict[str, Any]:
+    """Create or update the Supabase account RTLink signs in with.
+
+    RealtimeSuite keeps its accounts in Postgres; Supabase Auth is a separate
+    user table. An account created in the Server Manager can sign in to the LAN
+    app but not to RTLink until the same email and password exist in Supabase,
+    so mirror the credential whenever the plaintext is known (account creation
+    and password reset).
+    """
+    if not settings.rtlink_enabled:
+        raise RtlinkError(
+            "RTLink sync is not configured. Set RTLINK_SUPABASE_URL, "
+            "RTLINK_SUPABASE_SERVICE_ROLE_KEY and RTLINK_SITE_ID."
+        )
+    clean_email = (email or "").strip().lower()
+    if "@" not in clean_email:
+        raise RtlinkError("Enter a valid email address.")
+    if len(password or "") < 8:
+        raise RtlinkError("Password must be at least 8 characters.")
+
+    payload: dict[str, Any] = {
+        "email": clean_email,
+        "password": password,
+        "email_confirm": True,
+    }
+    if full_name:
+        payload["user_metadata"] = {"full_name": full_name}
+    try:
+        created = _request("POST", "/auth/v1/admin/users", payload)
+    except RtlinkError as exc:
+        if not _auth_error_means_exists(exc):
+            raise
+        existing = _find_auth_user(clean_email)
+        if existing is None:
+            raise
+        update: dict[str, Any] = {"password": password, "email_confirm": True}
+        if full_name:
+            update["user_metadata"] = {"full_name": full_name}
+        changed = _request("PUT", f"/auth/v1/admin/users/{existing.get('id')}", update)
+        user_id = (changed or existing).get("id") if isinstance(changed or existing, dict) else None
+        return {"ok": True, "email": clean_email, "status": "updated", "user_id": user_id}
+
+    user_id = created.get("id") if isinstance(created, dict) else None
+    return {"ok": True, "email": clean_email, "status": "created", "user_id": user_id}
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +493,9 @@ def sync_now(trigger: str = "manual") -> dict[str, Any]:
         site_settings = build_settings(stamp)
         if site_settings is not None:
             _upsert("rtlink_settings", [site_settings], conflict="site_id")
+        # Runs before the employees upsert so a re-created profile cannot wedge
+        # delivery on the unique (site_id, email) index.
+        _drop_orphan_employees(collections["employees"])
         for name, (table, _sql) in COLLECTIONS.items():
             _upsert(table, collections[name])
 
@@ -385,7 +506,9 @@ def sync_now(trigger: str = "manual") -> dict[str, Any]:
                 lambda table=table: _request(
                     "DELETE",
                     f"/rest/v1/{table}?site_id=eq.{settings.rtlink_site_id}"
-                    f"&synced_at=lt.{stamp}",
+                    # A raw "+00:00" offset becomes a space in a query string and
+                    # Postgres then rejects the timestamp.
+                    f"&synced_at=lt.{quote(stamp, safe='')}",
                     prefer="return=minimal",
                 ),
                 f"prune {table}",
@@ -413,7 +536,7 @@ def sync_now(trigger: str = "manual") -> dict[str, Any]:
             _request(
                 "DELETE",
                 f"/rest/v1/rtlink_sync_events?site_id=eq.{settings.rtlink_site_id}"
-                f"&received_at=lt.{cutoff}",
+                f"&received_at=lt.{quote(cutoff, safe='')}",
                 prefer="return=minimal",
             )
         except RtlinkError:
@@ -479,12 +602,27 @@ def fetch_pending(limit: int = 20) -> list[dict]:
 
 
 def _report(action_id: str, body: dict) -> None:
-    _request(
-        "PATCH",
-        f"/rest/v1/rtlink_requests?id=eq.{action_id}",
-        body,
-        prefer="return=minimal",
-    )
+    # The action is already applied locally, so a lost acknowledgement only means
+    # the next poll reports it again. Retry transport failures, but never a 4xx: a
+    # rejected write (missing grant, trigger) cannot pass on a second attempt.
+    path = f"/rest/v1/rtlink_requests?id=eq.{action_id}"
+    try:
+        _request("PATCH", path, body, prefer="return=minimal")
+    except RtlinkError as exc:
+        if "not linked to an employee" in str(exc):
+            global _ack_hint_logged
+            if not _ack_hint_logged:
+                _ack_hint_logged = True
+                logger.error(
+                    "RTLink cannot acknowledge actions: apply "
+                    "rtlink/supabase/migrations/0004_service_ack.sql once in Supabase"
+                )
+        if "failed (4" in str(exc):
+            raise
+        _with_retries(
+            lambda: _request("PATCH", path, body, prefer="return=minimal"),
+            f"ack {action_id}",
+        )
 
 
 def _log_row(session: Session, action_id: str) -> dict | None:
@@ -615,7 +753,9 @@ def _profile(session: Session, employee_id: Any) -> dict:
         {"id": employee_id},
     ).mappings().first()
     if row is None or row["organization_id"] is None:
-        raise ActionError("That employee account no longer exists on this site.")
+        # The mirror may still hold a queued action for an account that was
+        # re-created; retrying it can never succeed.
+        raise TerminalAction("That employee account was re-created on the site. Sign out and back in, then try again.")
     return dict(row)
 
 
@@ -933,7 +1073,7 @@ def _apply_one(action: dict) -> tuple[bool, str | None, str | None]:
             error = str(exc)
         elif isinstance(exc, HTTPException):
             error = str(exc.detail)
-        terminal = attempts >= MAX_ATTEMPTS
+        terminal = attempts >= MAX_ATTEMPTS or isinstance(exc, TerminalAction)
         logger.info("RTLink action %s (%s) failed: %s", action_id, kind, error)
         try:
             with session_scope() as session:
@@ -967,6 +1107,7 @@ def run_once(trigger: str = "poll") -> dict[str, Any]:
             _action_state["last_trigger"] = trigger
             _action_state["polls"] += 1
         applied = 0
+        changed = 0
         failed = 0
         messages: list[str] = []
         try:
@@ -993,6 +1134,8 @@ def run_once(trigger: str = "poll") -> dict[str, Any]:
             }
             if ok:
                 applied += 1
+                if message != "Already applied.":
+                    changed += 1
                 body["status"] = "applied"
                 body["error"] = None
                 body["result"] = message
@@ -1003,10 +1146,15 @@ def run_once(trigger: str = "poll") -> dict[str, Any]:
                 body["status"] = "failed" if next_attempts >= MAX_ATTEMPTS else "pending"
                 body["error"] = error
                 body["result"] = None
+            action_id = str(action["id"])
+            if _ack_retry_at.get(action_id, 0.0) > time.monotonic():
+                continue
             try:
-                _report(str(action["id"]), body)
+                _report(action_id, body)
+                _ack_retry_at.pop(action_id, None)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("RTLink action %s could not be acknowledged: %s", action["id"], exc)
+                _ack_retry_at[action_id] = time.monotonic() + ACK_RETRY_SECONDS
+                logger.warning("RTLink action %s could not be acknowledged: %s", action_id, exc)
 
         result: dict[str, Any] = {
             "ok": True,
@@ -1024,9 +1172,10 @@ def run_once(trigger: str = "poll") -> dict[str, Any]:
             _action_state["failed"] += failed
             _action_state["last_result"] = result
 
-        if applied:
+        if changed:
             # Employees should see the new shift/request without waiting for the
-            # next reconciliation pass.
+            # next reconciliation pass. A no-op re-apply (an action already in the
+            # local log) must not trigger a push on every poll.
             try:
                 sync_now("action")
             except Exception:  # noqa: BLE001
@@ -1076,17 +1225,33 @@ def _listener_loop() -> None:
             _stop.wait(10)
 
 
+# A change on this LAN is usually one save, so the push waits only long enough
+# for the surrounding transaction to commit.
+CHANGE_SETTLE_SECONDS = 0.35
+RETRY_MAX_SECONDS = 30.0
+
+
 def _worker_loop() -> None:
     interval = max(1, settings.rtlink_sync_minutes) * 60
     sync_now("startup")
     next_full = time.monotonic() + interval
+    retry_delay = 0.0
     while not _stop.is_set():
-        if settings.rtlink_change_sync and _dirty.wait(2.0):
+        if settings.rtlink_change_sync and (retry_delay or _dirty.wait(1.0)):
             _dirty.clear()
-            # Let a burst of writes settle before reading the database.
-            _stop.wait(2.0)
-            sync_now("change")
+            if not retry_delay:
+                # Let a burst of writes settle before reading the database.
+                _stop.wait(CHANGE_SETTLE_SECONDS)
+            result = sync_now("change")
             next_full = time.monotonic() + interval
+            if result.get("ok"):
+                retry_delay = 0.0
+            else:
+                # A delivered-then-lost change would leave RTLink stale until the
+                # next interval, so retry with backoff on top of the regular loop.
+                retry_delay = min(RETRY_MAX_SECONDS, retry_delay * 2 if retry_delay else 1.0)
+                _stop.wait(retry_delay)
+                _dirty.set()
             continue
         if time.monotonic() >= next_full:
             sync_now("interval")
@@ -1094,7 +1259,7 @@ def _worker_loop() -> None:
 
 
 def _poll_loop() -> None:
-    interval = max(3, settings.rtlink_poll_seconds)
+    interval = max(1, settings.rtlink_poll_seconds)
     while not _stop.is_set():
         try:
             run_once("poll")

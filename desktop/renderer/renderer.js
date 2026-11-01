@@ -389,6 +389,34 @@ function renderUsers() {
 
     const actions = document.createElement('td');
     actions.className = 'actions';
+
+    // Existing accounts need this once before RTLink will accept them: it sets the
+    // new password locally and mirrors it to Supabase Auth.
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'small';
+    reset.textContent = 'Reset password';
+    reset.title = `Sets a new password for ${user.full_name || user.email} and updates their RTLink sign-in`;
+    reset.style.marginRight = '8px';
+    reset.addEventListener('click', () => {
+      void withBusy(reset, 'Resetting...', async () => {
+        const password = generatePassword();
+        const result = await api.resetPassword({ email: user.email, password });
+        $('user-password').value = password;
+        const rtlinkFailed = result.rtlink && result.rtlink.ok === false;
+        $('user-list-status').textContent = rtlinkFailed
+          ? `Password reset for ${user.email}: ${password}. Share it now and check the log — the RTLink sign-in was not updated.`
+          : `Password reset for ${user.email}: ${password}. Share it now; the same password works in RTLink.`;
+        banner(
+          rtlinkFailed
+            ? `Password reset, but the RTLink sign-in was not synced: ${result.rtlink.error}`
+            : `Password reset for ${user.email}.`,
+          rtlinkFailed ? 'warn' : 'ok'
+        );
+      });
+    });
+    actions.appendChild(reset);
+
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'small danger';
@@ -1000,7 +1028,13 @@ $('btn-create-admin').addEventListener('click', () => withBusy($('btn-create-adm
     : await api.createAdmin(payload);
   $('setup-admin-status').textContent = result.detail || 'Administrator saved.';
   $('admin-password').value = '';
-  banner($('admin-reset').checked ? 'Password updated.' : 'Administrator account created.', 'ok');
+  const rtlinkFailed = result.rtlink && result.rtlink.ok === false;
+  banner(
+    rtlinkFailed
+      ? `Password updated, but the RTLink sign-in was not synced: ${result.rtlink.error}`
+      : ($('admin-reset').checked ? 'Password updated.' : 'Administrator account created.'),
+    rtlinkFailed ? 'warn' : 'ok'
+  );
 }));
 
 $('btn-generate-jwt').addEventListener('click', () => {
@@ -1106,8 +1140,18 @@ $('btn-create-user').addEventListener('click', () => withBusy($('btn-create-user
   $('user-name').value = '';
   $('user-email').value = '';
   $('user-password').value = '';
-  $('user-list-status').textContent = `Created ${payload.email.toLowerCase()}. Share the temporary password with them; assign a role in RealtimeCorp.`;
-  banner(`Account created for ${payload.email.toLowerCase()}.`, 'ok');
+  const rtlinkNote = !result.rtlink
+    ? ''
+    : result.rtlink.skipped
+      ? ' RTLink is not connected, so there is no RTLink sign-in yet.'
+      : result.rtlink.ok
+        ? ' The same credentials work in RTLink.'
+        : ` RTLink sign-in was not created: ${result.rtlink.error}`;
+  $('user-list-status').textContent = `Created ${payload.email.toLowerCase()}. Share the temporary password with them; assign a role in RealtimeCorp.${rtlinkNote}`;
+  banner(
+    `Account created for ${payload.email.toLowerCase()}.${rtlinkNote}`,
+    result.rtlink && result.rtlink.ok === false ? 'warn' : 'ok'
+  );
 }));
 
 $('btn-clear-logs').addEventListener('click', async () => {

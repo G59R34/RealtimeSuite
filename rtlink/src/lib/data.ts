@@ -183,6 +183,16 @@ export async function fetchWorkspace(): Promise<Workspace | null> {
   };
 }
 
+/**
+ * Changes whenever the site delivers a new snapshot. One tiny read, so the app can
+ * poll quickly and reload the workspace only when the data actually moved.
+ */
+export async function fetchSyncStamp(): Promise<string | null> {
+  const { data, error } = await supabase.rpc('rtlink_sync_stamp');
+  if (error) throw new Error(error.message);
+  return typeof data === 'string' && data ? data : null;
+}
+
 export async function submitAction(
   employeeId: string,
   siteId: string,

@@ -69,7 +69,7 @@ class Settings:
         self.rtlink_org_code = os.getenv("RTLINK_ORG_CODE", "").strip().upper()
         self.rtlink_sync_minutes = max(1, int(os.getenv("RTLINK_SYNC_MINUTES", "5") or 5))
         self.rtlink_change_sync = _bool(os.getenv("RTLINK_CHANGE_SYNC"), True)
-        self.rtlink_poll_seconds = max(3, int(os.getenv("RTLINK_POLL_SECONDS", "15") or 15))
+        self.rtlink_poll_seconds = max(1, int(os.getenv("RTLINK_POLL_SECONDS", "2") or 2))
         self.rtlink_timeout_seconds = max(5, int(os.getenv("RTLINK_SYNC_TIMEOUT_SECONDS", "20") or 20))
         self.upload_dir = Path(os.getenv("UPLOAD_DIR", str(BACKEND_DIR / "uploads")))
         self.smtp_host = os.getenv("SMTP_HOST", "").strip()
