@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { pendingActions } from '../lib/data';
 import {
-  dayKey,
+  addDays,
   formatDay,
   formatDuration,
   formatRange,
+  formatShortDay,
   minutesBetween,
-  sameLocalDay,
-  startOfLocalDay
+  sameLocalDay
 } from '../lib/format';
+import { estimatePay, formatMoney, startOfWeek, totalsBetween } from '../lib/hours';
 import { clockLocation } from '../lib/location';
 import type { ActionKind, Workspace } from '../types';
 import { Card, Empty, PendingNote, Pill } from './ui';
@@ -44,14 +45,27 @@ export function TodayView({ workspace, onSubmit }: Props) {
   const openTasks = todayTasks.filter(
     (task) => !task.acknowledged_at && task.status !== 'done' && task.status !== 'cancelled'
   );
-  const announcement =
-    announcements.find((item) => {
-      const starts = item.starts_at ? new Date(item.starts_at) : null;
-      const ends = item.ends_at ? new Date(item.ends_at) : null;
-      return (!starts || starts <= now) && (!ends || ends >= now);
-    }) ?? announcements[0];
-  const note =
-    boardNotes.find((item) => item.note_date === dayKey(startOfLocalDay(now))) ?? boardNotes[0];
+  // Everything the site has posted that is live right now, newest first, so the
+  // Today screen is not reduced to a single message.
+  const liveAnnouncements = announcements.filter((item) => {
+    const starts = item.starts_at ? new Date(item.starts_at) : null;
+    const ends = item.ends_at ? new Date(item.ends_at) : null;
+    return (!starts || starts <= now) && (!ends || ends >= now);
+  });
+  const news = [
+    ...liveAnnouncements.map((item) => ({
+      id: `announcement-${item.id}`,
+      kind: 'Announcement',
+      body: item.message,
+      when: item.starts_at ?? item.ends_at
+    })),
+    ...boardNotes.slice(0, 4).map((item) => ({
+      id: `note-${item.id}`,
+      kind: 'Board note',
+      body: item.body,
+      when: item.note_date
+    }))
+  ];
   const queued = pendingActions(actions);
   const todayMinutes = todayShifts.reduce(
     (total, shift) =>
@@ -59,6 +73,14 @@ export function TodayView({ workspace, onSubmit }: Props) {
       Math.max(0, minutesBetween(new Date(shift.start_at), new Date(shift.end_at)) - shift.break_minutes),
     0
   );
+  const weekStart = startOfWeek(now);
+  const weekDays = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const weekTotals = totalsBetween(mine, weekStart, addDays(weekStart, 7));
+  // Bars are measured against an eight-hour day rather than the busiest day of
+  // the week, so a four-hour shift looks half a day and the scale does not jump
+  // every time a shift is added.
+  const weekScale = Math.max(8 * 60, ...weekDays.map((day) => totalsBetween(mine, day, addDays(day, 1)).planned));
+  const weekPay = estimatePay(weekTotals.worked, employee.hourly_rate);
 
   async function run(kind: ActionKind, payload: Record<string, unknown>, key: string) {
     setBusy(key);
@@ -243,15 +265,64 @@ export function TodayView({ workspace, onSubmit }: Props) {
         )}
       </Card>
 
-      {announcement && (
-        <Card title="Announcement" hint="From your site">
-          <p className="announcement">{announcement.message}</p>
-        </Card>
-      )}
+      <Card
+        title="This week"
+        hint={`${formatShortDay(weekStart)} – ${formatShortDay(addDays(weekStart, 6))}`}
+      >
+        <div className="week-bars" aria-hidden="true">
+          {weekDays.map((day) => {
+            const planned = totalsBetween(mine, day, addDays(day, 1)).planned;
+            const height = planned ? Math.max(6, Math.min(100, Math.round((planned / weekScale) * 100))) : 0;
+            return (
+              <div
+                className={`week-bar${sameLocalDay(day, now) ? ' is-today' : ''}`}
+                key={day.toISOString()}
+                title={`${day.toLocaleDateString(undefined, { weekday: 'long' })} · ${
+                  planned ? formatDuration(planned) : 'no shifts'
+                }`}
+              >
+                <div className="week-bar-track">
+                  <span style={{ height: `${height}%` }} />
+                </div>
+                <small>{day.toLocaleDateString(undefined, { weekday: 'narrow' })}</small>
+              </div>
+            );
+          })}
+        </div>
+        <div className="stat-grid">
+          <div className="stat">
+            <span>Scheduled</span>
+            <strong>{formatDuration(weekTotals.planned)}</strong>
+          </div>
+          <div className="stat">
+            <span>Worked</span>
+            <strong>{formatDuration(weekTotals.worked)}</strong>
+          </div>
+          <div className="stat">
+            <span>Shifts</span>
+            <strong>{weekTotals.shifts}</strong>
+          </div>
+        </div>
+        <p className="card-footnote">
+          {weekPay !== null
+            ? `About ${formatMoney(weekPay)} at your base rate. Payroll at your site is final.`
+            : 'Hours come from your scheduled shifts; worked time appears after you clock out.'}
+        </p>
+      </Card>
 
-      {note && (
-        <Card title="Board note" hint={note.note_date}>
-          <p className="announcement">{note.body}</p>
+      {news.length > 0 && (
+        <Card title="News" hint={`${news.length} from your site`}>
+          <div className="list">
+            {news.map((item) => (
+              <div className="news-row" key={item.id}>
+                <div className="news-kind">{item.kind}</div>
+                <div className="news-body">
+                  <p>{item.body}</p>
+                  {item.when && <span className="muted small">{formatDay(item.when)}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 

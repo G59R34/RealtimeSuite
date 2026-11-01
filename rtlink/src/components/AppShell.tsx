@@ -22,6 +22,9 @@ const TABS: { id: ViewMode; label: string; path: string }[] = [
   { id: 'me', label: 'Me', path: 'M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zM4 21a8 8 0 0 1 16 0' }
 ];
 
+// Statuses that mean "someone still has to look at this".
+const AWAITING = new Set(['pending', 'submitted', 'under_review', 'pending_admin']);
+
 /** "Updated 2 min ago" — reads as freshness, where a bare clock time reads as a timestamp. */
 function syncLabel(iso: string | null | undefined, now: number): string {
   if (!iso) return 'Not synced';
@@ -65,6 +68,12 @@ export function AppShell({
   }, []);
 
   const freshness = syncLabel(workspace.site.last_sync_at, now);
+  const waiting =
+    workspace.timeOff.filter((row) => AWAITING.has(row.status)).length +
+    workspace.overtime.filter((row) => AWAITING.has(row.status)).length +
+    workspace.exceptions.filter((row) => AWAITING.has(row.status)).length +
+    workspace.swaps.filter((row) => AWAITING.has(row.status)).length +
+    workspace.actions.filter((action) => action.status === 'pending').length;
 
   return (
     <div className="app-shell">
@@ -125,10 +134,18 @@ export function AppShell({
             type="button"
             className={view === tab.id ? 'active' : undefined}
             aria-current={view === tab.id ? 'page' : undefined}
+            aria-label={
+              tab.id === 'requests' && waiting > 0 ? `Requests, ${waiting} waiting` : undefined
+            }
             onClick={() => onView(tab.id)}
           >
             <NavIcon path={tab.path} />
             <span>{tab.label}</span>
+            {tab.id === 'requests' && waiting > 0 && (
+              <b className="nav-badge" aria-hidden="true">
+                {waiting > 9 ? '9+' : waiting}
+              </b>
+            )}
           </button>
         ))}
       </nav>
