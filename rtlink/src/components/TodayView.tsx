@@ -2,16 +2,18 @@ import { useState } from 'react';
 import { pendingActions } from '../lib/data';
 import {
   addDays,
+  formatDateInput,
   formatDay,
   formatDuration,
   formatRange,
   formatShortDay,
   minutesBetween,
-  sameLocalDay
+  sameLocalDay,
+  statusLabel
 } from '../lib/format';
 import { estimatePay, formatMoney, startOfWeek, totalsBetween } from '../lib/hours';
 import { clockLocation } from '../lib/location';
-import type { ActionKind, Workspace } from '../types';
+import type { ActionKind, ViewMode, Workspace } from '../types';
 import { Card, Empty, PendingNote, Pill } from './ui';
 
 type Submit = (kind: ActionKind, payload: Record<string, unknown>) => Promise<void>;
@@ -19,10 +21,23 @@ type Submit = (kind: ActionKind, payload: Record<string, unknown>) => Promise<vo
 interface Props {
   workspace: Workspace;
   onSubmit: Submit;
+  /** Lets a banner row jump to the screen that can actually resolve it. */
+  onNavigate?: (view: ViewMode) => void;
 }
 
-export function TodayView({ workspace, onSubmit }: Props) {
-  const { employee, shifts, tasks, announcements, boardNotes, settings, actions } = workspace;
+type Alert = {
+  id: string;
+  tone: 'warm' | 'live';
+  title: string;
+  detail: string;
+  to?: ViewMode;
+};
+
+const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'completed']);
+
+export function TodayView({ workspace, onSubmit, onNavigate }: Props) {
+  const { employee, shifts, tasks, training, exceptions, announcements, boardNotes, settings, actions } =
+    workspace;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,6 +97,57 @@ export function TodayView({ workspace, onSubmit }: Props) {
   const weekScale = Math.max(8 * 60, ...weekDays.map((day) => totalsBetween(mine, day, addDays(day, 1)).planned));
   const weekPay = estimatePay(weekTotals.worked, employee.hourly_rate);
 
+  // Everything waiting on the employee, gathered above the clock card: a task is
+  // only "seen" once acknowledged, so this is the one place a new assignment can
+  // not be missed by never opening the Tasks tab.
+  const openTaskList = tasks.filter(
+    (task) => !task.acknowledged_at && !CLOSED_TASK_STATUSES.has(task.status)
+  );
+  const openTraining = training.filter((item) => !item.completed_at && item.status !== 'completed');
+  const todayKey = formatDateInput(now);
+  const leaveToday = exceptions.find(
+    (request) =>
+      request.status === 'approved' &&
+      (request.exception_code === 'VAUT' || request.exception_code === 'DO') &&
+      request.start_date <= todayKey &&
+      request.end_date >= todayKey
+  );
+  const alerts: Alert[] = [];
+  if (openTaskList.length) {
+    const first = openTaskList[0];
+    alerts.push({
+      id: 'tasks',
+      tone: 'warm',
+      title: `${openTaskList.length} new task${openTaskList.length === 1 ? '' : 's'} to acknowledge`,
+      detail: `${first.title}${
+        openTaskList.length > 1 ? ` and ${openTaskList.length - 1} more` : ''
+      } · ${formatShortDay(first.start_at)}`,
+      to: 'tasks'
+    });
+  }
+  if (leaveToday) {
+    alerts.push({
+      id: 'leave',
+      tone: 'live',
+      title: 'Approved leave today',
+      detail: `${statusLabel(leaveToday.exception_code)} · ${formatShortDay(
+        leaveToday.start_date
+      )} – ${formatShortDay(leaveToday.end_date)}`
+    });
+  }
+  if (openTraining.length) {
+    const first = openTraining[0];
+    alerts.push({
+      id: 'training',
+      tone: 'warm',
+      title: `${openTraining.length} training${openTraining.length === 1 ? '' : 's'} to finish`,
+      detail: `${first.course_title ?? 'Course'}${
+        first.due_at ? ` · due ${formatShortDay(first.due_at)}` : ''
+      }`,
+      to: 'me'
+    });
+  }
+
   async function run(kind: ActionKind, payload: Record<string, unknown>, key: string) {
     setBusy(key);
     setError(null);
@@ -126,6 +192,47 @@ export function TodayView({ workspace, onSubmit }: Props) {
 
   return (
     <div className="stack">
+      {alerts.length > 0 && (
+        <section className="alerts" aria-label="Needs your attention">
+          <div className="alerts-head">
+            <span className="alerts-eyebrow">Needs you</span>
+            <span className="alerts-count">{alerts.length}</span>
+          </div>
+          <div className="alerts-list">
+            {alerts.map((alert) => {
+              const row = (
+                <>
+                  <span className={`alert-dot alert-dot-${alert.tone}`} aria-hidden="true" />
+                  <span className="alert-text">
+                    <strong>{alert.title}</strong>
+                    <span>{alert.detail}</span>
+                  </span>
+                  {alert.to && (
+                    <span className="alert-go" aria-hidden="true">
+                      Open
+                    </span>
+                  )}
+                </>
+              );
+              return alert.to ? (
+                <button
+                  className="alert-row"
+                  key={alert.id}
+                  type="button"
+                  onClick={() => onNavigate?.(alert.to as ViewMode)}
+                >
+                  {row}
+                </button>
+              ) : (
+                <div className="alert-row" key={alert.id}>
+                  {row}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section className={`clock-card${active ? ' is-live' : ''}`}>
         <div className="clock-top">
           <span className="clock-eyebrow">{active ? 'On the clock' : 'Right now'}</span>

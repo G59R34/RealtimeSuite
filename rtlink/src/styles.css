@@ -250,6 +250,101 @@ code {
   font-weight: 600;
 }
 
+/* Home-screen "needs you" banner: one numbered row per thing waiting. */
+.alerts {
+  padding: 10px 12px 4px;
+  border: 1px solid #f0d3a8;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fffaf1 0%, var(--card) 70%);
+  box-shadow: var(--shadow);
+}
+
+.alerts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alerts-eyebrow {
+  color: var(--warm);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.alerts-count {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warm-bg);
+  color: var(--warm);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 0;
+  border: 0;
+  border-top: 1px solid #f5e7d2;
+  background: none;
+  text-align: left;
+}
+
+.alerts-list .alert-row:first-child {
+  border-top: 0;
+}
+
+button.alert-row {
+  cursor: pointer;
+}
+
+.alert-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+}
+
+.alert-dot-warm {
+  background: #d98a1a;
+}
+
+.alert-dot-live {
+  background: var(--live);
+}
+
+.alert-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.alert-text strong {
+  font-size: 0.86rem;
+}
+
+.alert-text span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.alert-go {
+  flex: none;
+  align-self: center;
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .banner {
   margin: 10px 16px 0;
   padding: 10px 13px;

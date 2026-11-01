@@ -226,7 +226,9 @@ export default function App() {
       notice={notice}
       error={error}
     >
-      {view === 'today' && <TodayView workspace={workspace} onSubmit={submit} />}
+      {view === 'today' && (
+        <TodayView workspace={workspace} onSubmit={submit} onNavigate={setView} />
+      )}
       {view === 'schedule' && <ScheduleView workspace={workspace} onSubmit={submit} />}
       {view === 'tasks' && <TasksView workspace={workspace} onSubmit={submit} />}
       {view === 'requests' && <RequestsView workspace={workspace} onSubmit={submit} />}
