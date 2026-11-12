@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
@@ -257,7 +258,25 @@ def _request(
         detail = exc.read().decode("utf-8", "replace")[:400]
         raise RtlinkError(f"{method} {path} failed ({exc.code}): {detail}") from exc
     except urllib.error.URLError as exc:
-        raise RtlinkError(f"{method} {path} failed: {exc.reason}") from exc
+        reason = getattr(exc, "reason", exc)
+        message = str(reason)
+        host = urlsplit(url).hostname or settings.rtlink_supabase_url
+        # urllib reports "the project was deleted" and "this machine is offline"
+        # as the same socket error, but the fix is completely different, so name
+        # the actual cause instead of echoing errno.
+        if isinstance(reason, socket.gaierror) or "nodename nor servname" in message or "Name or service not known" in message:
+            raise RtlinkError(
+                f"Cannot resolve {host}, so the RTLink Supabase project could not be reached. "
+                "A paused or deleted Supabase project stops resolving its hostname. Check the project URL "
+                "under Supabase → Settings → API against RTLINK_SUPABASE_URL (which the manager copies from "
+                "rtlink/.env), and update it if the project was re-created."
+            ) from exc
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            raise RtlinkError(
+                f"{host} did not answer within {timeout} seconds. Check the network connection to Supabase "
+                "and RTLINK_SYNC_TIMEOUT_SECONDS."
+            ) from exc
+        raise RtlinkError(f"{method} {path} failed: {message}") from exc
     if not raw:
         return None
     try:

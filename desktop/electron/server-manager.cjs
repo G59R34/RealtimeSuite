@@ -217,9 +217,9 @@ class ServerManager extends EventEmitter {
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error('Port must be between 1 and 65535.');
       }
-      if (port < 1024 && process.platform !== 'win32') {
-        throw new Error(`Port ${port} is privileged on this system. Use a port above 1024.`);
-      }
+      // Low ports are stored as entered: whether they can be bound depends on the
+      // account running the server (root, capabilities, Windows), which the
+      // renderer reports from check.lowPortsAllowed and start() enforces.
     }
     this.settings = { ...this.settings, ...patch };
     await fsp.mkdir(this.userDataDir, { recursive: true });
@@ -827,6 +827,11 @@ class ServerManager extends EventEmitter {
       port: config.port,
       authMethod: 'trust',
       persistent: true,
+      // initdb inherits the locale of whatever process starts the manager. A
+      // GUI launch has no LANG, so it picks the C locale and creates an
+      // SQL-ASCII cluster in which psycopg hands every text column back as
+      // bytes. Ask for UTF-8 explicitly so the cluster is readable from Python.
+      initdbFlags: ['--encoding=UTF8'],
       postgresFlags: ['-h', config.host, '-c', 'listen_addresses=127.0.0.1,::1'],
       onLog: (message) => this.log('system', `[PostgreSQL] ${String(message).trim()}`),
       onError: (error) => this.log('stderr', `[PostgreSQL] ${String(error)}`)
@@ -838,12 +843,32 @@ class ServerManager extends EventEmitter {
     }
     await pg.start();
     this.embeddedPostgres = pg;
+    const encoding = await this.embeddedServerEncoding();
+    if (encoding && encoding.toUpperCase() !== 'UTF8') {
+      await this.stopEmbeddedPostgres();
+      throw new Error(
+        `The bundled PostgreSQL cluster at ${this.embeddedPostgresDataDir()} uses ${encoding} text encoding. ` +
+          'Dump any data you need, quit the manager, delete that folder, and start again so it is re-created as UTF-8.'
+      );
+    }
     if (!(await this.embeddedDatabaseExists(config.database))) {
       await pg.createDatabase(config.database);
       this.log('system', `Created local database ${config.database}.`);
     }
     this.log('system', `Bundled PostgreSQL is ready on ${config.host}:${config.port}.`);
     return { started: true, detail: `Started bundled PostgreSQL on ${config.host}:${config.port}.` };
+  }
+
+  async embeddedServerEncoding() {
+    const client = this.embeddedPostgres.getPgClient('postgres', this.embeddedPostgresRuntimeConfig().host);
+    await client.connect();
+    try {
+      const result = await client.query("select current_setting('server_encoding') as encoding");
+      const row = result && result.rows && result.rows[0];
+      return row ? String(row.encoding || '') : '';
+    } finally {
+      await client.end();
+    }
   }
 
   async embeddedDatabaseExists(database) {
@@ -949,7 +974,8 @@ class ServerManager extends EventEmitter {
       'try:',
       '    conn = psycopg.connect(sys.argv[1], connect_timeout=5)',
       '    row = conn.execute("select current_database(), version()").fetchone()',
-      '    print("CONNECTED:" + row[0])',
+      '    name = row[0].decode("utf-8", "replace") if isinstance(row[0], bytes) else row[0]',
+      '    print("CONNECTED:" + name)',
       '    conn.close()',
       'except Exception as exc:',
       '    print("DATABASE_ERROR:" + str(exc))',
