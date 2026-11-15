@@ -11,7 +11,7 @@ import { MeView } from './components/MeView';
 import { fetchSyncStamp, fetchWorkspace, signOut, submitAction } from './lib/data';
 import { clearOrgCode, getOrgCode, supabase, supabaseConfigured } from './lib/supabase';
 import type { ActionKind, ViewMode, Workspace } from './types';
-
+// force deploy 1
 // How often to ask the site whether a new snapshot arrived, and how often to
 // reload anyway in case a stamp was missed.
 const STAMP_POLL_MS = 2000;

@@ -1,0 +1,24 @@
+[package]
+name = "realtimesuite-manager"
+version = "2.0.0"
+description = "Desktop control panel for the RealtimeSuite LAN scheduling server."
+edition = "2021"
+rust-version = "1.80"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postgres = { version = "0.19", default-features = false }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
